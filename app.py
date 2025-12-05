@@ -1,16 +1,16 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import time  # 時間経過用
+import time
 from datetime import datetime, timedelta
 
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
-# --- ★CSS修正：ボタンの色を水色にする ---
+# --- CSS修正：ボタンの色を水色にする ---
 st.markdown("""
     <style>
-    /* フォームの送信ボタン（設定を保存）を特定して水色にする */
+    /* フォームの「設定を保存」ボタンを水色にする */
     div[data-testid="stFormSubmitButton"] > button {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
@@ -18,11 +18,11 @@ st.markdown("""
         font-weight: bold !important;
     }
     div[data-testid="stFormSubmitButton"] > button:hover {
-        background-color: #009ACD !important; /* 少し濃い水色 */
+        background-color: #009ACD !important;
         border-color: #009ACD !important;
         color: white !important;
     }
-    /* テスト送信ボタンなども対象にする場合 */
+    /* テスト送信ボタン（type="primary"）も水色にする */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
@@ -70,12 +70,32 @@ if 'email_config' not in st.session_state:
         "enable_alert": True
     }
 
+# ★追加：リセット成功メッセージ表示用フラグ
+if 'reset_success_msg' not in st.session_state:
+    st.session_state['reset_success_msg'] = None
+
 # --- ヘルパー関数 ---
 def get_sensor_thresholds(sensor_id):
     if sensor_id in st.session_state['sensor_configs']:
         return st.session_state['sensor_configs'][sensor_id]
     else:
         return DEFAULT_THRESHOLDS
+
+# ★重要：リセットボタンが押されたときに実行される関数（コールバック）
+def reset_thresholds_callback(sensor_id):
+    # 1. 保存された設定を削除
+    if sensor_id in st.session_state['sensor_configs']:
+        del st.session_state['sensor_configs'][sensor_id]
+    
+    # 2. 入力フォームの値を強制的にデフォルト値で上書き
+    # これをコールバックで行うことでエラー（StreamlitAPIException）を回避できます
+    st.session_state[f"x_{sensor_id}"] = DEFAULT_THRESHOLDS['x']
+    st.session_state[f"y_{sensor_id}"] = DEFAULT_THRESHOLDS['y']
+    st.session_state[f"z_{sensor_id}"] = DEFAULT_THRESHOLDS['z']
+    st.session_state[f"v_{sensor_id}"] = DEFAULT_THRESHOLDS['v']
+    
+    # 3. 成功メッセージを表示する合図を出す
+    st.session_state['reset_success_msg'] = f"✅ 成功：{sensor_id} をデフォルト設定に戻しました。"
 
 # --- データ生成関数 ---
 def generate_area_data(sensors):
@@ -352,10 +372,8 @@ elif menu == "システム設定":
             new_email = st.text_input("通報先メールアドレス", value=current_email)
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
             
-            # CSSで水色ボタンに指定
             submitted = st.form_submit_button("設定を保存")
         
-        # ★追加：メッセージ表示用の空き枠
         msg_placeholder_mail = st.empty()
 
         if submitted:
@@ -364,8 +382,6 @@ elif menu == "システム設定":
             else:
                 st.session_state['email_config']['address'] = new_email
                 st.session_state['email_config']['enable_alert'] = new_enable
-                
-                # 成功メッセージを表示 → 2秒待機 → 消去
                 msg_placeholder_mail.success("✅ 成功：メール設定を保存しました。")
                 time.sleep(2)
                 msg_placeholder_mail.empty()
@@ -388,6 +404,11 @@ elif menu == "システム設定":
 
     # --- タブ2: 閾値設定 ---
     with tab_threshold:
+        # リセット成功時のメッセージが予約されていたらここで表示
+        if st.session_state['reset_success_msg']:
+            st.success(st.session_state['reset_success_msg'])
+            st.session_state['reset_success_msg'] = None # 一度表示したら消す
+        
         st.subheader("センサー別 閾値詳細設定")
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -415,10 +436,8 @@ elif menu == "システム設定":
             
             save_col, _ = st.columns([1, 5])
             with save_col:
-                # CSSで水色ボタンに指定
                 submitted_th = st.form_submit_button("設定を保存")
         
-        # ★追加：メッセージ表示用の空き枠
         msg_placeholder_th = st.empty()
 
         if submitted_th:
@@ -435,21 +454,8 @@ elif menu == "システム設定":
                 msg_placeholder_th.empty()
 
         if is_custom:
-            if st.button("デフォルト設定に戻す"):
-                del st.session_state['sensor_configs'][th_target]
-                
-                # ★修正：セッションステート（入力フォームの中身）も強制的にデフォルト値で上書きする
-                st.session_state[f"x_{key_suffix}"] = DEFAULT_THRESHOLDS['x']
-                st.session_state[f"y_{key_suffix}"] = DEFAULT_THRESHOLDS['y']
-                st.session_state[f"z_{key_suffix}"] = DEFAULT_THRESHOLDS['z']
-                st.session_state[f"v_{key_suffix}"] = DEFAULT_THRESHOLDS['v']
-                
-                # メッセージを一瞬表示してからリロード
-                placeholder_reset = st.empty()
-                placeholder_reset.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
-                time.sleep(1)
-                placeholder_reset.empty()
-                st.rerun()
+            # ★修正：on_clickコールバックを使って安全に値をリセットする
+            st.button("デフォルト設定に戻す", on_click=reset_thresholds_callback, args=(th_target,))
 
         st.divider()
         st.caption(f"現在のデフォルト値: X={DEFAULT_THRESHOLDS['x']}G, Y={DEFAULT_THRESHOLDS['y']}G, Z={DEFAULT_THRESHOLDS['z']}G, 電圧={DEFAULT_THRESHOLDS['v']}V")
