@@ -1,28 +1,32 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import time  # 時間経過用
 from datetime import datetime, timedelta
 
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
-# --- ★追加：ボタンの色を水色にするCSS ---
+# --- ★CSS修正：ボタンの色を水色にする ---
 st.markdown("""
     <style>
-    /* Primaryボタン（設定保存ボタンなど）の色を水色に変更 */
-    button[kind="primary"] {
+    /* フォームの送信ボタン（設定を保存）を特定して水色にする */
+    div[data-testid="stFormSubmitButton"] > button {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
         color: white !important;
+        font-weight: bold !important;
     }
-    button[kind="primary"]:hover {
-        background-color: #009ACD !important;
+    div[data-testid="stFormSubmitButton"] > button:hover {
+        background-color: #009ACD !important; /* 少し濃い水色 */
         border-color: #009ACD !important;
+        color: white !important;
     }
-    button[kind="primary"]:focus {
+    /* テスト送信ボタンなども対象にする場合 */
+    button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
-        box-shadow: none !important;
+        color: white !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -31,7 +35,6 @@ st.markdown("""
 AREAS = [f"エリア {chr(65+i)}" for i in range(13)]
 TOTAL_SENSORS = 110
 
-# デフォルト（初期）閾値
 DEFAULT_THRESHOLDS = {
     "x": 0.5,
     "y": 0.5,
@@ -49,7 +52,7 @@ def get_sensors_by_area(area_name):
         end_id = start_id + avg - 1
     return [f"Sensor-{str(i).zfill(3)}" for i in range(start_id, end_id + 1)]
 
-# --- セッション状態の初期化 ---
+# --- セッション状態 ---
 if "auth" in st.query_params and st.query_params["auth"] == "true":
     st.session_state['logged_in'] = True
 elif 'logged_in' not in st.session_state:
@@ -349,28 +352,39 @@ elif menu == "システム設定":
             new_email = st.text_input("通報先メールアドレス", value=current_email)
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
             
-            # type="primary" とすることで、冒頭のCSS（水色）が適用される
-            if st.form_submit_button("設定を保存", type="primary"):
-                if not new_email or "@" not in new_email:
-                     st.error("❌ 失敗：有効なメールアドレスを入力してください。")
-                else:
-                    st.session_state['email_config']['address'] = new_email
-                    st.session_state['email_config']['enable_alert'] = new_enable
-                    st.success("✅ 成功：メール設定を保存しました。")
+            # CSSで水色ボタンに指定
+            submitted = st.form_submit_button("設定を保存")
+        
+        # ★追加：メッセージ表示用の空き枠
+        msg_placeholder_mail = st.empty()
+
+        if submitted:
+            if not new_email or "@" not in new_email:
+                 msg_placeholder_mail.error("❌ 失敗：有効なメールアドレスを入力してください。")
+            else:
+                st.session_state['email_config']['address'] = new_email
+                st.session_state['email_config']['enable_alert'] = new_enable
+                
+                # 成功メッセージを表示 → 2秒待機 → 消去
+                msg_placeholder_mail.success("✅ 成功：メール設定を保存しました。")
+                time.sleep(2)
+                msg_placeholder_mail.empty()
 
         st.divider()
         st.subheader("送信テスト")
         st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
-        # こちらも水色ボタンを適用
+        # type="primary"で水色ボタンCSSを適用
         if st.button("テストメール送信実行", type="primary"):
+            msg_placeholder_test = st.empty()
             if st.session_state['email_config']['enable_alert']:
-                import time
                 with st.spinner("メールサーバーに接続中..."):
-                    time.sleep(1.5)
+                    time.sleep(1.0)
                 st.toast(f"送信成功！ {st.session_state['email_config']['address']} にメールを送りました。", icon="📧")
-                st.success(f"✅ [送信成功] 宛先: {st.session_state['email_config']['address']}")
+                msg_placeholder_test.success(f"✅ [送信成功] 宛先: {st.session_state['email_config']['address']}")
+                time.sleep(3)
+                msg_placeholder_test.empty()
             else:
-                st.error("❌ 失敗：メール通知機能が無効になっています。上のチェックボックスを有効にしてください。")
+                msg_placeholder_test.error("❌ 失敗：メール通知機能が無効になっています。")
 
     # --- タブ2: 閾値設定 ---
     with tab_threshold:
@@ -389,7 +403,6 @@ elif menu == "システム設定":
 
         with st.form("threshold_form"):
             c1, c2, c3, c4 = st.columns(4)
-            # keyにセンサーIDを含めることで、リセット時に確実に値を更新させる
             key_suffix = th_target
             with c1:
                 new_x = st.number_input("X軸 閾値 (G)", value=float(current_limits['x']), step=0.1, format="%.2f", key=f"x_{key_suffix}")
@@ -402,34 +415,40 @@ elif menu == "システム設定":
             
             save_col, _ = st.columns([1, 5])
             with save_col:
-                # ここも水色ボタン
-                submitted = st.form_submit_button("設定を保存", type="primary")
+                # CSSで水色ボタンに指定
+                submitted_th = st.form_submit_button("設定を保存")
+        
+        # ★追加：メッセージ表示用の空き枠
+        msg_placeholder_th = st.empty()
 
-            if submitted:
-                if new_x < 0 or new_y < 0 or new_z < 0:
-                     st.error("❌ 失敗：振動閾値に負の数は設定できません。")
-                elif new_v < 0:
-                     st.error("❌ 失敗：電圧値に負の数は設定できません。")
-                else:
-                    st.session_state['sensor_configs'][th_target] = {
-                        'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
-                    }
-                    st.success(f"✅ 成功：{th_target} の設定を更新しました。")
-                    st.toast("設定を保存しました", icon="💾")
+        if submitted_th:
+            if new_x < 0 or new_y < 0 or new_z < 0:
+                 msg_placeholder_th.error("❌ 失敗：振動閾値に負の数は設定できません。")
+            elif new_v < 0:
+                 msg_placeholder_th.error("❌ 失敗：電圧値に負の数は設定できません。")
+            else:
+                st.session_state['sensor_configs'][th_target] = {
+                    'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
+                }
+                msg_placeholder_th.success(f"✅ 成功：{th_target} の設定を更新しました。")
+                time.sleep(2)
+                msg_placeholder_th.empty()
 
         if is_custom:
             if st.button("デフォルト設定に戻す"):
-                # 設定データを削除
                 del st.session_state['sensor_configs'][th_target]
                 
-                # ★重要：フォームの状態(Session State)も強制的に削除する
-                # これを行わないと、画面上の数値が前のまま残ってしまう
-                keys_to_reset = [f"x_{th_target}", f"y_{th_target}", f"z_{th_target}", f"v_{th_target}"]
-                for k in keys_to_reset:
-                    if k in st.session_state:
-                        del st.session_state[k]
+                # ★修正：セッションステート（入力フォームの中身）も強制的にデフォルト値で上書きする
+                st.session_state[f"x_{key_suffix}"] = DEFAULT_THRESHOLDS['x']
+                st.session_state[f"y_{key_suffix}"] = DEFAULT_THRESHOLDS['y']
+                st.session_state[f"z_{key_suffix}"] = DEFAULT_THRESHOLDS['z']
+                st.session_state[f"v_{key_suffix}"] = DEFAULT_THRESHOLDS['v']
                 
-                st.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
+                # メッセージを一瞬表示してからリロード
+                placeholder_reset = st.empty()
+                placeholder_reset.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
+                time.sleep(1)
+                placeholder_reset.empty()
                 st.rerun()
 
         st.divider()
