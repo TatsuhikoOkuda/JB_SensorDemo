@@ -6,6 +6,27 @@ from datetime import datetime, timedelta
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
+# --- ★追加：ボタンの色を水色にするCSS ---
+st.markdown("""
+    <style>
+    /* Primaryボタン（設定保存ボタンなど）の色を水色に変更 */
+    button[kind="primary"] {
+        background-color: #00BFFF !important; /* DeepSkyBlue */
+        border-color: #00BFFF !important;
+        color: white !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #009ACD !important;
+        border-color: #009ACD !important;
+    }
+    button[kind="primary"]:focus {
+        background-color: #00BFFF !important;
+        border-color: #00BFFF !important;
+        box-shadow: none !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # --- 設定：エリアとセンサーの構成 ---
 AREAS = [f"エリア {chr(65+i)}" for i in range(13)]
 TOTAL_SENSORS = 110
@@ -311,7 +332,7 @@ elif menu == "異常履歴":
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
 # --------------------------
-# 4. システム設定画面 (★修正箇所)
+# 4. システム設定画面
 # --------------------------
 elif menu == "システム設定":
     st.title("⚙️ システム設定")
@@ -328,8 +349,8 @@ elif menu == "システム設定":
             new_email = st.text_input("通報先メールアドレス", value=current_email)
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
             
-            if st.form_submit_button("設定を保存"):
-                # ★修正：成功・失敗の判定
+            # type="primary" とすることで、冒頭のCSS（水色）が適用される
+            if st.form_submit_button("設定を保存", type="primary"):
                 if not new_email or "@" not in new_email:
                      st.error("❌ 失敗：有効なメールアドレスを入力してください。")
                 else:
@@ -340,7 +361,8 @@ elif menu == "システム設定":
         st.divider()
         st.subheader("送信テスト")
         st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
-        if st.button("テストメール送信実行"):
+        # こちらも水色ボタンを適用
+        if st.button("テストメール送信実行", type="primary"):
             if st.session_state['email_config']['enable_alert']:
                 import time
                 with st.spinner("メールサーバーに接続中..."):
@@ -367,21 +389,23 @@ elif menu == "システム設定":
 
         with st.form("threshold_form"):
             c1, c2, c3, c4 = st.columns(4)
+            # keyにセンサーIDを含めることで、リセット時に確実に値を更新させる
+            key_suffix = th_target
             with c1:
-                new_x = st.number_input("X軸 閾値 (G)", value=float(current_limits['x']), step=0.1, format="%.2f")
+                new_x = st.number_input("X軸 閾値 (G)", value=float(current_limits['x']), step=0.1, format="%.2f", key=f"x_{key_suffix}")
             with c2:
-                new_y = st.number_input("Y軸 閾値 (G)", value=float(current_limits['y']), step=0.1, format="%.2f")
+                new_y = st.number_input("Y軸 閾値 (G)", value=float(current_limits['y']), step=0.1, format="%.2f", key=f"y_{key_suffix}")
             with c3:
-                new_z = st.number_input("Z軸 閾値 (G)", value=float(current_limits['z']), step=0.1, format="%.2f")
+                new_z = st.number_input("Z軸 閾値 (G)", value=float(current_limits['z']), step=0.1, format="%.2f", key=f"z_{key_suffix}")
             with c4:
-                new_v = st.number_input("電圧 下限値 (V)", value=float(current_limits['v']), step=0.1, format="%.2f")
+                new_v = st.number_input("電圧 下限値 (V)", value=float(current_limits['v']), step=0.1, format="%.2f", key=f"v_{key_suffix}")
             
             save_col, _ = st.columns([1, 5])
             with save_col:
+                # ここも水色ボタン
                 submitted = st.form_submit_button("設定を保存", type="primary")
 
             if submitted:
-                # ★修正：成功・失敗の判定（負の値チェックなど）
                 if new_x < 0 or new_y < 0 or new_z < 0:
                      st.error("❌ 失敗：振動閾値に負の数は設定できません。")
                 elif new_v < 0:
@@ -391,15 +415,20 @@ elif menu == "システム設定":
                         'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
                     }
                     st.success(f"✅ 成功：{th_target} の設定を更新しました。")
-                    
-                    # 画面をリロードして反映させる（成功メッセージを見せるために少し待つ必要はありませんが、フォーム値を即反映させるためにrerunは有効）
-                    # ただしrerunするとメッセージが消えるため、今回はrerunせずその場でSuccessを出す形にします。
-                    # フォーム外の表示（設定状況など）を即座に変えたい場合はToastも併用します。
                     st.toast("設定を保存しました", icon="💾")
 
         if is_custom:
             if st.button("デフォルト設定に戻す"):
+                # 設定データを削除
                 del st.session_state['sensor_configs'][th_target]
+                
+                # ★重要：フォームの状態(Session State)も強制的に削除する
+                # これを行わないと、画面上の数値が前のまま残ってしまう
+                keys_to_reset = [f"x_{th_target}", f"y_{th_target}", f"z_{th_target}", f"v_{th_target}"]
+                for k in keys_to_reset:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                
                 st.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
                 st.rerun()
 
