@@ -28,12 +28,14 @@ st.markdown("""
         border-color: #00BFFF !important;
         color: white !important;
     }
-    /* テスト送信ボタンや閉じるボタン */
+    /* 通常のPrimaryボタン（テスト送信など） */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
         color: white !important;
     }
+    /* ★追加：閉じるボタン（Secondary）を少し目立たせる（グレー背景に赤文字などお好みで調整可能） */
+    /* 今回はシンプルに見やすくするため、デフォルト形状のままにします */
     </style>
 """, unsafe_allow_html=True)
 
@@ -165,17 +167,15 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- ★Altairグラフ描画関数（スクロール無効＋ツールチップ強化） ---
+# --- Altairグラフ描画関数 ---
 def create_static_chart(df, y_columns, title, color_scheme='category10', is_voltage=False):
     df_reset = df.reset_index()
     df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
     
-    # 1. 基本の線グラフ
-    # 電圧の場合は色を指定、それ以外はスキーマを使用
     if is_voltage:
         line_layer = alt.Chart(df_melted).mark_line(color='#ffaa00').encode(
             x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-            y=alt.Y('Value', title='値', scale=alt.Scale(zero=False)), # 変化が見やすいようにゼロ始点にしない
+            y=alt.Y('Value', title='値', scale=alt.Scale(zero=False)), 
         )
     else:
         line_layer = alt.Chart(df_melted).mark_line().encode(
@@ -184,28 +184,15 @@ def create_static_chart(df, y_columns, title, color_scheme='category10', is_volt
             color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
         )
 
-    # 2. ツールチップ用の透明な点（ヒットエリア）
-    # 線の上だけでなく、点の周りでも反応するようにサイズを大きく設定
-    if is_voltage:
-        point_layer = line_layer.mark_circle(size=100).encode(
-            opacity=alt.value(0), # 透明にして見えなくする
-            tooltip=[
-                alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
-                alt.Tooltip('Metric', title='項目'),
-                alt.Tooltip('Value', title='値', format='.3f')
-            ]
-        )
-    else:
-        point_layer = line_layer.mark_circle(size=100).encode(
-            opacity=alt.value(0),
-            tooltip=[
-                alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
-                alt.Tooltip('Metric', title='項目'),
-                alt.Tooltip('Value', title='値', format='.3f')
-            ]
-        )
-    
-    # 線と点を重ねる（interactive()は呼ばない＝ズーム無効）
+    # ツールチップ用（透明な点）
+    point_layer = line_layer.mark_circle(size=100).encode(
+        opacity=alt.value(0),
+        tooltip=[
+            alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
+            alt.Tooltip('Metric', title='項目'),
+            alt.Tooltip('Value', title='値', format='.3f')
+        ]
+    )
     return (line_layer + point_layer).properties(title=title, height=300)
 
 # --- ポップアップ定義 ---
@@ -216,13 +203,19 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
-    # 【上】閉じるボタン
-    if st.button("この画面を閉じる (Top)", type="primary", key="close_top"):
-        st.rerun()
-        
-    st.divider()
+    # ★変更：上部のボタンを「✖」にして右寄せにする
+    # columnsを使って[コンテンツエリア, ボタンエリア]に分ける
+    col_info, col_close = st.columns([9, 1])
     
-    st.caption(f"選択されたセンサー: {sensor_id}")
+    with col_info:
+        st.caption(f"選択されたセンサー: {sensor_id}")
+    
+    with col_close:
+        # ✖ボタン (type="primary" で水色になります)
+        if st.button("✖", key="close_top", type="primary"):
+            st.rerun()
+
+    # 以降の内容表示
     limits = get_sensor_thresholds(sensor_id)
     
     if "異常" in status:
@@ -236,7 +229,7 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
-    # 1. XYZグラフ
+    # グラフ描画
     st.subheader("振動データ (X, Y, Z)")
     chart_xyz = create_static_chart(
         ts_data, 
@@ -245,7 +238,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     )
     st.altair_chart(chart_xyz, use_container_width=True)
     
-    # 2. 電圧グラフ
     st.subheader("電圧推移")
     chart_v = create_static_chart(
         ts_data,
@@ -256,8 +248,9 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
-    # 【下】閉じるボタン（スクロールしても必ず押せるように配置）
-    if st.button("この画面を閉じる (Bottom)", type="primary", key="close_bottom"):
+    # ★変更：下部のボタンも「✖」にする
+    # use_container_width=True で横幅いっぱいの押しやすいボタンにする
+    if st.button("✖ 閉じる", type="primary", key="close_bottom", use_container_width=True):
         st.rerun()
 
 # --- ログイン画面 ---
