@@ -37,24 +37,17 @@ elif 'logged_in' not in st.session_state:
 if 'table_key' not in st.session_state:
     st.session_state['table_key'] = 0
 
-# ★追加：センサーごとの閾値設定を保存する辞書
 if 'sensor_configs' not in st.session_state:
     st.session_state['sensor_configs'] = {} 
-    # 構造: {'Sensor-001': {'x': 0.6, 'y': 0.6, 'z': 2.1, 'v': 2.7}, ...}
 
-# ★追加：メール設定
 if 'email_config' not in st.session_state:
     st.session_state['email_config'] = {
         "address": "admin@example.com",
         "enable_alert": True
     }
 
-# --- ヘルパー関数：閾値取得 ---
+# --- ヘルパー関数 ---
 def get_sensor_thresholds(sensor_id):
-    """
-    センサーIDごとの閾値を返す。
-    個別設定があればそれを、なければデフォルト値を返す。
-    """
     if sensor_id in st.session_state['sensor_configs']:
         return st.session_state['sensor_configs'][sensor_id]
     else:
@@ -64,9 +57,7 @@ def get_sensor_thresholds(sensor_id):
 def generate_area_data(sensors):
     data = []
     for s in sensors:
-        # そのセンサーの閾値を取得（判定に使用）
         limits = get_sensor_thresholds(s)
-        
         rand_val = np.random.random()
         x = np.random.normal(0.02, 0.05)
         y = np.random.normal(0.02, 0.05)
@@ -74,16 +65,15 @@ def generate_area_data(sensors):
         v = np.random.normal(3.3, 0.02)
         status_list = []
 
-        # 異常生成ロジック（閾値を超えさせる）
         if rand_val > 0.90:
             if np.random.random() > 0.5:
-                x = limits['x'] + np.random.uniform(0.1, 0.5) # 閾値+α
+                x = limits['x'] + np.random.uniform(0.1, 0.5)
                 status_list.append("X軸")
             if np.random.random() > 0.8:
                 y = limits['y'] + np.random.uniform(0.1, 0.5)
                 status_list.append("Y軸")
             if np.random.random() > 0.9:
-                v = limits['v'] - np.random.uniform(0.1, 0.5) # 閾値-α
+                v = limits['v'] - np.random.uniform(0.1, 0.5)
                 status_list.append("電圧")
 
         if len(status_list) > 0:
@@ -151,13 +141,10 @@ except AttributeError:
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.caption(f"選択されたセンサー: {sensor_id}")
-    
-    # 個別閾値の取得（グラフ判定用）
     limits = get_sensor_thresholds(sensor_id)
     
     if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
-        # デモ機能：異常時にメール送信ボタンを表示
         if st.session_state['email_config']['enable_alert']:
             st.divider()
             st.warning(f"📩 異常検知のため、管理者 ({st.session_state['email_config']['address']}) へ自動通報が行われます。")
@@ -169,9 +156,7 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
     st.subheader("振動データ (X, Y, Z)")
-    # 閾値をグラフに表示したい場合、参照線を追加するなどの処理が可能ですが、ここではシンプルにします
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
-    
     st.subheader("電圧推移")
     st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
 
@@ -189,7 +174,7 @@ if not st.session_state['logged_in']:
                     st.query_params["auth"] = "true"
                     st.rerun()
                 else:
-                    st.error("IDまたはパスワードが違います")
+                    st.error("❌ ログイン失敗：IDまたはパスワードが違います")
     st.stop()
 
 # --- メイン画面 ---
@@ -230,11 +215,8 @@ if menu == "リアルタイム監視":
     st.markdown(f"**{selected_area}** のセンサー一覧")
     st.caption("行をクリックすると詳細グラフがポップアップします。")
 
-    # ハイライト関数の修正：センサーごとの閾値を参照する
     def highlight_cells(row):
         styles = ['' for _ in row]
-        
-        # センサーIDを取得して、そのセンサーの閾値を呼び出す
         s_id = row["センサーID"]
         limits = get_sensor_thresholds(s_id)
         
@@ -246,8 +228,6 @@ if menu == "リアルタイム監視":
 
         if "異常" in row["状態"]:
             styles[idx_status] = 'color: red; font-weight: bold;'
-            
-            # 取得したlimitsを使って判定
             if row["X軸 (G)"] >= limits['x']:
                 styles[idx_x] = 'background-color: #ffcccc; color: red; font-weight: bold;'
             if row["Y軸 (G)"] >= limits['y']:
@@ -299,7 +279,6 @@ if menu == "リアルタイム監視":
                 selection_mode="single-row",
                 key=new_key
             )
-        
         show_sensor_dialog(sel_id, sel_status, sel_x, sel_y, sel_z, sel_v)
 
 # --------------------------
@@ -332,7 +311,7 @@ elif menu == "異常履歴":
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
 # --------------------------
-# 4. システム設定画面 (★大幅改修)
+# 4. システム設定画面 (★修正箇所)
 # --------------------------
 elif menu == "システム設定":
     st.title("⚙️ システム設定")
@@ -350,31 +329,30 @@ elif menu == "システム設定":
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
             
             if st.form_submit_button("設定を保存"):
-                st.session_state['email_config']['address'] = new_email
-                st.session_state['email_config']['enable_alert'] = new_enable
-                st.success("メール設定を更新しました。")
+                # ★修正：成功・失敗の判定
+                if not new_email or "@" not in new_email:
+                     st.error("❌ 失敗：有効なメールアドレスを入力してください。")
+                else:
+                    st.session_state['email_config']['address'] = new_email
+                    st.session_state['email_config']['enable_alert'] = new_enable
+                    st.success("✅ 成功：メール設定を保存しました。")
 
         st.divider()
         st.subheader("送信テスト")
         st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
         if st.button("テストメール送信実行"):
             if st.session_state['email_config']['enable_alert']:
-                # 実際のメール送信処理はここに記述します（SMTPなど）
-                # 今回はデモなのでToast通知で再現
                 import time
                 with st.spinner("メールサーバーに接続中..."):
                     time.sleep(1.5)
                 st.toast(f"送信成功！ {st.session_state['email_config']['address']} にメールを送りました。", icon="📧")
-                st.success(f"✅ [Simulation] Sent alert email to {st.session_state['email_config']['address']}")
+                st.success(f"✅ [送信成功] 宛先: {st.session_state['email_config']['address']}")
             else:
-                st.error("メール通知機能が無効になっています。上のチェックボックスを有効にしてください。")
+                st.error("❌ 失敗：メール通知機能が無効になっています。上のチェックボックスを有効にしてください。")
 
     # --- タブ2: 閾値設定 ---
     with tab_threshold:
         st.subheader("センサー別 閾値詳細設定")
-        st.info("センサーを選択し、個別に閾値を変更できます。変更しない場合はデフォルト値が適用されます。")
-        
-        # 1. エリアとセンサーの選択
         col_t1, col_t2 = st.columns(2)
         with col_t1:
             th_area = st.selectbox("エリア選択", AREAS, key="th_area")
@@ -382,13 +360,11 @@ elif menu == "システム設定":
             th_sensors = get_sensors_by_area(th_area)
             th_target = st.selectbox("設定するセンサーを選択", th_sensors, key="th_target")
         
-        # 現在の値を取得（個別設定 or デフォルト）
         current_limits = get_sensor_thresholds(th_target)
         is_custom = th_target in st.session_state['sensor_configs']
         
         st.markdown(f"**{th_target} の設定状況:** " + ("🛠 個別設定中" if is_custom else "📦 デフォルト値"))
 
-        # 2. 値の入力フォーム
         with st.form("threshold_form"):
             c1, c2, c3, c4 = st.columns(4)
             with c1:
@@ -400,26 +376,31 @@ elif menu == "システム設定":
             with c4:
                 new_v = st.number_input("電圧 下限値 (V)", value=float(current_limits['v']), step=0.1, format="%.2f")
             
-            save_col, reset_col = st.columns([1, 5])
+            save_col, _ = st.columns([1, 5])
             with save_col:
                 submitted = st.form_submit_button("設定を保存", type="primary")
-            with reset_col:
-                # フォーム内での条件分岐ボタンは難しいため、保存ボタンで上書きする運用にします
-                pass
 
             if submitted:
-                # 辞書に保存
-                st.session_state['sensor_configs'][th_target] = {
-                    'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
-                }
-                st.toast(f"{th_target} の設定を更新しました！", icon="💾")
-                st.rerun()
+                # ★修正：成功・失敗の判定（負の値チェックなど）
+                if new_x < 0 or new_y < 0 or new_z < 0:
+                     st.error("❌ 失敗：振動閾値に負の数は設定できません。")
+                elif new_v < 0:
+                     st.error("❌ 失敗：電圧値に負の数は設定できません。")
+                else:
+                    st.session_state['sensor_configs'][th_target] = {
+                        'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
+                    }
+                    st.success(f"✅ 成功：{th_target} の設定を更新しました。")
+                    
+                    # 画面をリロードして反映させる（成功メッセージを見せるために少し待つ必要はありませんが、フォーム値を即反映させるためにrerunは有効）
+                    # ただしrerunするとメッセージが消えるため、今回はrerunせずその場でSuccessを出す形にします。
+                    # フォーム外の表示（設定状況など）を即座に変えたい場合はToastも併用します。
+                    st.toast("設定を保存しました", icon="💾")
 
-        # デフォルトに戻すボタン（フォーム外）
         if is_custom:
             if st.button("デフォルト設定に戻す"):
                 del st.session_state['sensor_configs'][th_target]
-                st.toast(f"{th_target} をデフォルト設定に戻しました。", icon="↩️")
+                st.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
                 st.rerun()
 
         st.divider()
