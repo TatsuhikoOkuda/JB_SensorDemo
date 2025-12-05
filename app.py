@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
-# --- CSS修正：ボタンの色を水色にする ---
+# --- CSS: ボタンの色を水色にする ---
 st.markdown("""
     <style>
-    /* フォームの「設定を保存」ボタンを水色にする */
+    /* 設定保存ボタン */
     div[data-testid="stFormSubmitButton"] > button {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
@@ -22,7 +22,7 @@ st.markdown("""
         border-color: #009ACD !important;
         color: white !important;
     }
-    /* テスト送信ボタン（type="primary"）も水色にする */
+    /* テスト送信ボタンなど */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
@@ -70,7 +70,6 @@ if 'email_config' not in st.session_state:
         "enable_alert": True
     }
 
-# ★追加：リセット成功メッセージ表示用フラグ
 if 'reset_success_msg' not in st.session_state:
     st.session_state['reset_success_msg'] = None
 
@@ -81,20 +80,19 @@ def get_sensor_thresholds(sensor_id):
     else:
         return DEFAULT_THRESHOLDS
 
-# ★重要：リセットボタンが押されたときに実行される関数（コールバック）
+# ★修正：リセット用コールバック関数
 def reset_thresholds_callback(sensor_id):
-    # 1. 保存された設定を削除
+    # 1. 保存データを削除
     if sensor_id in st.session_state['sensor_configs']:
         del st.session_state['sensor_configs'][sensor_id]
     
-    # 2. 入力フォームの値を強制的にデフォルト値で上書き
-    # これをコールバックで行うことでエラー（StreamlitAPIException）を回避できます
-    st.session_state[f"x_{sensor_id}"] = DEFAULT_THRESHOLDS['x']
-    st.session_state[f"y_{sensor_id}"] = DEFAULT_THRESHOLDS['y']
-    st.session_state[f"z_{sensor_id}"] = DEFAULT_THRESHOLDS['z']
-    st.session_state[f"v_{sensor_id}"] = DEFAULT_THRESHOLDS['v']
+    # 2. ★重要：値を代入するのではなく、キー自体を削除してリセットする
+    # これにより "The widget with key ... was created with a default value..." エラーを回避
+    keys_to_reset = [f"x_{sensor_id}", f"y_{sensor_id}", f"z_{sensor_id}", f"v_{sensor_id}"]
+    for k in keys_to_reset:
+        if k in st.session_state:
+            del st.session_state[k]
     
-    # 3. 成功メッセージを表示する合図を出す
     st.session_state['reset_success_msg'] = f"✅ 成功：{sensor_id} をデフォルト設定に戻しました。"
 
 # --- データ生成関数 ---
@@ -385,11 +383,12 @@ elif menu == "システム設定":
                 msg_placeholder_mail.success("✅ 成功：メール設定を保存しました。")
                 time.sleep(2)
                 msg_placeholder_mail.empty()
+                # 念のためリロード
+                st.rerun()
 
         st.divider()
         st.subheader("送信テスト")
         st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
-        # type="primary"で水色ボタンCSSを適用
         if st.button("テストメール送信実行", type="primary"):
             msg_placeholder_test = st.empty()
             if st.session_state['email_config']['enable_alert']:
@@ -404,10 +403,10 @@ elif menu == "システム設定":
 
     # --- タブ2: 閾値設定 ---
     with tab_threshold:
-        # リセット成功時のメッセージが予約されていたらここで表示
+        # リセット成功メッセージがあれば表示して消す
         if st.session_state['reset_success_msg']:
             st.success(st.session_state['reset_success_msg'])
-            st.session_state['reset_success_msg'] = None # 一度表示したら消す
+            st.session_state['reset_success_msg'] = None
         
         st.subheader("センサー別 閾値詳細設定")
         col_t1, col_t2 = st.columns(2)
@@ -450,11 +449,12 @@ elif menu == "システム設定":
                     'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
                 }
                 msg_placeholder_th.success(f"✅ 成功：{th_target} の設定を更新しました。")
-                time.sleep(2)
+                time.sleep(1.5)
                 msg_placeholder_th.empty()
+                # ★重要：保存後に画面全体をリロードすることで、「個別設定中」への表示切り替えと「デフォルトに戻す」ボタンの出現を行う
+                st.rerun()
 
         if is_custom:
-            # ★修正：on_clickコールバックを使って安全に値をリセットする
             st.button("デフォルト設定に戻す", on_click=reset_thresholds_callback, args=(th_target,))
 
         st.divider()
