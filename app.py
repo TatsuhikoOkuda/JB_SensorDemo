@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
+import altair as alt  # ★追加：グラフの詳細設定用
 from datetime import datetime, timedelta
 
 # ページ設定
@@ -27,7 +28,7 @@ st.markdown("""
         border-color: #00BFFF !important;
         color: white !important;
     }
-    /* テスト送信ボタンなども水色にする */
+    /* テスト送信ボタンや閉じるボタンも水色にする */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
@@ -164,6 +165,25 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
+# --- ★Altairを使ったグラフ描画関数（スクロール拡大無効化） ---
+def create_static_chart(df, y_columns, title, color_scheme='category10'):
+    # データフレームをLong形式に変換（Altair用）
+    df_reset = df.reset_index()
+    df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
+    
+    # チャート定義
+    chart = alt.Chart(df_melted).mark_line().encode(
+        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
+        y=alt.Y('Value', title='値'),
+        color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
+        tooltip=['timestamp', 'Metric', 'Value'] # ホバー時のツールチップは有効にする
+    ).properties(
+        title=title,
+        height=300
+    )
+    # ★重要: .interactive() を呼ばないことで、ズーム/パンを無効化する
+    return chart
+
 # --- ポップアップ定義 ---
 try:
     dialog_decorator = st.dialog
@@ -172,11 +192,18 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
+    # ★修正：閉じるボタンを一番上に配置（type="primary"で水色強調）
+    if st.button("この画面を閉じる", type="primary", key="close_top"):
+        st.rerun()
+        
+    st.divider()
+    
     st.caption(f"選択されたセンサー: {sensor_id}")
+    limits = get_sensor_thresholds(sensor_id)
+    
     if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
         if st.session_state['email_config']['enable_alert']:
-            st.divider()
             st.warning(f"📩 異常検知のため、管理者 ({st.session_state['email_config']['address']}) へ自動通報が行われます。")
     else:
         st.success("現在の状態は正常です。")
@@ -185,10 +212,29 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
+    # ★修正：Altairチャートを使用して描画（ズーム無効）
+    
+    # 1. XYZグラフ
     st.subheader("振動データ (X, Y, Z)")
-    st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
+    chart_xyz = create_static_chart(
+        ts_data, 
+        ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], 
+        "3軸加速度推移"
+    )
+    st.altair_chart(chart_xyz, use_container_width=True)
+    
+    # 2. 電圧グラフ
     st.subheader("電圧推移")
-    st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
+    # 電圧用に色を変える（オレンジ系）
+    ts_data_v = ts_data.reset_index()[['timestamp', '電圧 (V)']]
+    chart_v = alt.Chart(ts_data_v).mark_line(color='#ffaa00').encode(
+        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
+        y=alt.Y('電圧 (V)', title='電圧 (V)', scale=alt.Scale(domain=[2.0, 4.0])), # 電圧の見やすい範囲
+        tooltip=['timestamp', '電圧 (V)']
+    ).properties(
+        height=250
+    )
+    st.altair_chart(chart_v, use_container_width=True)
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -326,10 +372,19 @@ elif menu == "グラフ分析":
 
     st.divider()
     df = generate_timeseries_data(points=100, freq='min')
+    
+    # ★ここもAltairに置き換えて操作感を統一
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
-    st.line_chart(df[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
+    chart_xyz = create_static_chart(df, ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], "")
+    st.altair_chart(chart_xyz, use_container_width=True)
+
     st.subheader(f"{target_sensor} - 電圧データ")
-    st.line_chart(df[['電圧 (V)']], color="#ffaa00")
+    chart_v = alt.Chart(df.reset_index()).mark_line(color='#ffaa00').encode(
+        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
+        y=alt.Y('電圧 (V)', title='電圧 (V)', scale=alt.Scale(domain=[2.0, 4.0])),
+        tooltip=['timestamp', '電圧 (V)']
+    ).properties(height=250)
+    st.altair_chart(chart_v, use_container_width=True)
 
 # --------------------------
 # 3. 異常履歴画面
@@ -408,7 +463,6 @@ elif menu == "システム設定":
 
         with st.form("threshold_form"):
             c1, c2, c3, c4 = st.columns(4)
-            # リセット回数をKeyに含める
             reset_id = st.session_state['reset_counts'][th_target]
             key_suffix = f"{th_target}_{reset_id}"
             
@@ -433,7 +487,6 @@ elif menu == "システム設定":
             elif new_v < 0:
                  msg_placeholder_th.error("❌ 失敗：電圧値に負の数は設定できません。")
             else:
-                # ★追加ロジック：入力値がデフォルト値と同じかどうかチェックする
                 is_default = (
                     new_x == DEFAULT_THRESHOLDS['x'] and
                     new_y == DEFAULT_THRESHOLDS['y'] and
@@ -442,15 +495,12 @@ elif menu == "システム設定":
                 )
 
                 if is_default:
-                    # デフォルト値と同じなら、個別設定から削除する
                     if th_target in st.session_state['sensor_configs']:
                         del st.session_state['sensor_configs'][th_target]
                     
-                    # リセットカウンタを上げて、画面の状態もリフレッシュする
                     st.session_state['reset_counts'][th_target] += 1
                     msg_placeholder_th.success(f"✅ 設定変更：{th_target} の値がデフォルトと同じため、標準設定として扱います。")
                 else:
-                    # 違う値なら、個別設定として保存
                     st.session_state['sensor_configs'][th_target] = {
                         'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
                     }
@@ -460,7 +510,6 @@ elif menu == "システム設定":
                 msg_placeholder_th.empty()
                 st.rerun()
 
-        # デフォルトに戻すボタン
         if is_custom:
             if st.button("デフォルト設定に戻す"):
                 del st.session_state['sensor_configs'][th_target]
