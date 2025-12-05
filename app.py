@@ -9,10 +9,14 @@ st.set_page_config(page_title="振動センサー監視システム", layout="wi
 # --- 設定：エリアとセンサーの構成 ---
 AREAS = [f"エリア {chr(65+i)}" for i in range(13)]
 TOTAL_SENSORS = 110
-THRESHOLD_X = 0.5
-THRESHOLD_Y = 0.5
-THRESHOLD_Z = 2.0
-THRESHOLD_VOLT_LOW = 2.8
+
+# デフォルト（初期）閾値
+DEFAULT_THRESHOLDS = {
+    "x": 0.5,
+    "y": 0.5,
+    "z": 2.0,
+    "v": 2.8
+}
 
 def get_sensors_by_area(area_name):
     area_index = AREAS.index(area_name)
@@ -24,7 +28,7 @@ def get_sensors_by_area(area_name):
         end_id = start_id + avg - 1
     return [f"Sensor-{str(i).zfill(3)}" for i in range(start_id, end_id + 1)]
 
-# --- セッションと認証 ---
+# --- セッション状態の初期化 ---
 if "auth" in st.query_params and st.query_params["auth"] == "true":
     st.session_state['logged_in'] = True
 elif 'logged_in' not in st.session_state:
@@ -33,30 +37,60 @@ elif 'logged_in' not in st.session_state:
 if 'table_key' not in st.session_state:
     st.session_state['table_key'] = 0
 
+# ★追加：センサーごとの閾値設定を保存する辞書
+if 'sensor_configs' not in st.session_state:
+    st.session_state['sensor_configs'] = {} 
+    # 構造: {'Sensor-001': {'x': 0.6, 'y': 0.6, 'z': 2.1, 'v': 2.7}, ...}
+
+# ★追加：メール設定
+if 'email_config' not in st.session_state:
+    st.session_state['email_config'] = {
+        "address": "admin@example.com",
+        "enable_alert": True
+    }
+
+# --- ヘルパー関数：閾値取得 ---
+def get_sensor_thresholds(sensor_id):
+    """
+    センサーIDごとの閾値を返す。
+    個別設定があればそれを、なければデフォルト値を返す。
+    """
+    if sensor_id in st.session_state['sensor_configs']:
+        return st.session_state['sensor_configs'][sensor_id]
+    else:
+        return DEFAULT_THRESHOLDS
+
 # --- データ生成関数 ---
 def generate_area_data(sensors):
     data = []
     for s in sensors:
+        # そのセンサーの閾値を取得（判定に使用）
+        limits = get_sensor_thresholds(s)
+        
         rand_val = np.random.random()
         x = np.random.normal(0.02, 0.05)
         y = np.random.normal(0.02, 0.05)
         z = np.random.normal(1.0, 0.05)
         v = np.random.normal(3.3, 0.02)
         status_list = []
+
+        # 異常生成ロジック（閾値を超えさせる）
         if rand_val > 0.90:
             if np.random.random() > 0.5:
-                x = np.random.uniform(0.6, 0.9)
+                x = limits['x'] + np.random.uniform(0.1, 0.5) # 閾値+α
                 status_list.append("X軸")
             if np.random.random() > 0.8:
-                y = np.random.uniform(0.6, 0.9)
+                y = limits['y'] + np.random.uniform(0.1, 0.5)
                 status_list.append("Y軸")
             if np.random.random() > 0.9:
-                v = np.random.uniform(2.0, 2.7)
+                v = limits['v'] - np.random.uniform(0.1, 0.5) # 閾値-α
                 status_list.append("電圧")
+
         if len(status_list) > 0:
             status_str = "⚠️ 異常 (" + ",".join(status_list) + ")"
         else:
             status_str = "正常"
+
         data.append({
             "センサーID": s,
             "状態": status_str,
@@ -67,7 +101,6 @@ def generate_area_data(sensors):
         })
     return pd.DataFrame(data)
 
-# ★修正：latest_values引数を追加。ここに辞書を渡すと、グラフの最新値をその値に強制一致させます。
 def generate_timeseries_data(points=60, freq='min', latest_values=None):
     now = datetime.now()
     dates = []
@@ -77,9 +110,8 @@ def generate_timeseries_data(points=60, freq='min', latest_values=None):
         else:
             d = now - timedelta(minutes=i)
         dates.append(d)
-    dates.reverse() # 古い順に並べる
+    dates.reverse()
     
-    # ベースの乱数生成
     df = pd.DataFrame({
         'timestamp': dates,
         'X軸 (G)': np.random.normal(0, 0.1, points),
@@ -88,9 +120,7 @@ def generate_timeseries_data(points=60, freq='min', latest_values=None):
         '電圧 (V)': np.random.normal(3.3, 0.01, points)
     })
     
-    # ★重要：最新の値（一番下の行）を、テーブルの値で上書きする
     if latest_values is not None:
-        # iloc[-1] は「最後の行（最新日時）」を指します
         df.iloc[-1, df.columns.get_loc('X軸 (G)')] = latest_values['x']
         df.iloc[-1, df.columns.get_loc('Y軸 (G)')] = latest_values['y']
         df.iloc[-1, df.columns.get_loc('Z軸 (G)')] = latest_values['z']
@@ -118,28 +148,32 @@ try:
 except AttributeError:
     dialog_decorator = st.experimental_dialog
 
-# ★修正：引数に x, y, z, v を追加して受け取れるようにする
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.caption(f"選択されたセンサー: {sensor_id}")
+    
+    # 個別閾値の取得（グラフ判定用）
+    limits = get_sensor_thresholds(sensor_id)
+    
     if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
+        # デモ機能：異常時にメール送信ボタンを表示
+        if st.session_state['email_config']['enable_alert']:
+            st.divider()
+            st.warning(f"📩 異常検知のため、管理者 ({st.session_state['email_config']['address']}) へ自動通報が行われます。")
     else:
         st.success("現在の状態は正常です。")
     
     st.subheader("直近1分間の推移 (リアルタイム詳細)")
-    
-    # ★修正：テーブルの値を「最新値」としてグラフ生成関数に渡す
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
     st.subheader("振動データ (X, Y, Z)")
+    # 閾値をグラフに表示したい場合、参照線を追加するなどの処理が可能ですが、ここではシンプルにします
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
     
     st.subheader("電圧推移")
     st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
-    
-    st.caption("※グラフの右端（最新点）が、一覧表の数値と一致します。")
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -196,22 +230,31 @@ if menu == "リアルタイム監視":
     st.markdown(f"**{selected_area}** のセンサー一覧")
     st.caption("行をクリックすると詳細グラフがポップアップします。")
 
+    # ハイライト関数の修正：センサーごとの閾値を参照する
     def highlight_cells(row):
         styles = ['' for _ in row]
+        
+        # センサーIDを取得して、そのセンサーの閾値を呼び出す
+        s_id = row["センサーID"]
+        limits = get_sensor_thresholds(s_id)
+        
         idx_status = row.index.get_loc("状態")
         idx_x = row.index.get_loc("X軸 (G)")
         idx_y = row.index.get_loc("Y軸 (G)")
         idx_z = row.index.get_loc("Z軸 (G)")
         idx_v = row.index.get_loc("電圧 (V)")
+
         if "異常" in row["状態"]:
             styles[idx_status] = 'color: red; font-weight: bold;'
-            if row["X軸 (G)"] >= THRESHOLD_X:
+            
+            # 取得したlimitsを使って判定
+            if row["X軸 (G)"] >= limits['x']:
                 styles[idx_x] = 'background-color: #ffcccc; color: red; font-weight: bold;'
-            if row["Y軸 (G)"] >= THRESHOLD_Y:
+            if row["Y軸 (G)"] >= limits['y']:
                 styles[idx_y] = 'background-color: #ffcccc; color: red; font-weight: bold;'
-            if row["Z軸 (G)"] >= THRESHOLD_Z:
+            if row["Z軸 (G)"] >= limits['z']:
                 styles[idx_z] = 'background-color: #ffcccc; color: red; font-weight: bold;'
-            if row["電圧 (V)"] < THRESHOLD_VOLT_LOW:
+            if row["電圧 (V)"] < limits['v']:
                 styles[idx_v] = 'background-color: #ffcccc; color: red; font-weight: bold;'
         return styles
 
@@ -233,7 +276,6 @@ if menu == "リアルタイム監視":
 
     if len(event.selection.rows) > 0:
         selected_index = event.selection.rows[0]
-        # ★修正：選択された行から、4つの数値も取得する
         sel_row = df_current.iloc[selected_index]
         sel_id = sel_row["センサーID"]
         sel_status = sel_row["状態"]
@@ -258,7 +300,6 @@ if menu == "リアルタイム監視":
                 key=new_key
             )
         
-        # 取得した数値を引数として渡す
         show_sensor_dialog(sel_id, sel_status, sel_x, sel_y, sel_z, sel_v)
 
 # --------------------------
@@ -291,19 +332,95 @@ elif menu == "異常履歴":
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
 # --------------------------
-# 4. システム設定画面
+# 4. システム設定画面 (★大幅改修)
 # --------------------------
 elif menu == "システム設定":
-    st.title("⚙️ 設定画面")
-    st.info("設定画面です（デモ）")
-    tab1, tab2 = st.tabs(["エリア情報", "閾値設定"])
-    with tab1:
-        st.table(pd.DataFrame({
-            "エリア名": AREAS,
-            "割当センサー数": [len(get_sensors_by_area(a)) for a in AREAS]
-        }))
-    with tab2:
-        st.write("全センサー共通設定")
-        c1, c2 = st.columns(2)
-        c1.number_input("X/Y軸 異常判定閾値 (G)", value=THRESHOLD_X)
-        c2.number_input("Z軸 異常判定閾値 (G)", value=THRESHOLD_Z)
+    st.title("⚙️ システム設定")
+    
+    tab_mail, tab_threshold = st.tabs(["📩 メール通報設定", "📏 センサー閾値設定"])
+    
+    # --- タブ1: メール設定 ---
+    with tab_mail:
+        st.subheader("警報メール通知設定")
+        with st.form("email_form"):
+            current_email = st.session_state['email_config']['address']
+            current_enable = st.session_state['email_config']['enable_alert']
+            
+            new_email = st.text_input("通報先メールアドレス", value=current_email)
+            new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
+            
+            if st.form_submit_button("設定を保存"):
+                st.session_state['email_config']['address'] = new_email
+                st.session_state['email_config']['enable_alert'] = new_enable
+                st.success("メール設定を更新しました。")
+
+        st.divider()
+        st.subheader("送信テスト")
+        st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
+        if st.button("テストメール送信実行"):
+            if st.session_state['email_config']['enable_alert']:
+                # 実際のメール送信処理はここに記述します（SMTPなど）
+                # 今回はデモなのでToast通知で再現
+                import time
+                with st.spinner("メールサーバーに接続中..."):
+                    time.sleep(1.5)
+                st.toast(f"送信成功！ {st.session_state['email_config']['address']} にメールを送りました。", icon="📧")
+                st.success(f"✅ [Simulation] Sent alert email to {st.session_state['email_config']['address']}")
+            else:
+                st.error("メール通知機能が無効になっています。上のチェックボックスを有効にしてください。")
+
+    # --- タブ2: 閾値設定 ---
+    with tab_threshold:
+        st.subheader("センサー別 閾値詳細設定")
+        st.info("センサーを選択し、個別に閾値を変更できます。変更しない場合はデフォルト値が適用されます。")
+        
+        # 1. エリアとセンサーの選択
+        col_t1, col_t2 = st.columns(2)
+        with col_t1:
+            th_area = st.selectbox("エリア選択", AREAS, key="th_area")
+        with col_t2:
+            th_sensors = get_sensors_by_area(th_area)
+            th_target = st.selectbox("設定するセンサーを選択", th_sensors, key="th_target")
+        
+        # 現在の値を取得（個別設定 or デフォルト）
+        current_limits = get_sensor_thresholds(th_target)
+        is_custom = th_target in st.session_state['sensor_configs']
+        
+        st.markdown(f"**{th_target} の設定状況:** " + ("🛠 個別設定中" if is_custom else "📦 デフォルト値"))
+
+        # 2. 値の入力フォーム
+        with st.form("threshold_form"):
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                new_x = st.number_input("X軸 閾値 (G)", value=float(current_limits['x']), step=0.1, format="%.2f")
+            with c2:
+                new_y = st.number_input("Y軸 閾値 (G)", value=float(current_limits['y']), step=0.1, format="%.2f")
+            with c3:
+                new_z = st.number_input("Z軸 閾値 (G)", value=float(current_limits['z']), step=0.1, format="%.2f")
+            with c4:
+                new_v = st.number_input("電圧 下限値 (V)", value=float(current_limits['v']), step=0.1, format="%.2f")
+            
+            save_col, reset_col = st.columns([1, 5])
+            with save_col:
+                submitted = st.form_submit_button("設定を保存", type="primary")
+            with reset_col:
+                # フォーム内での条件分岐ボタンは難しいため、保存ボタンで上書きする運用にします
+                pass
+
+            if submitted:
+                # 辞書に保存
+                st.session_state['sensor_configs'][th_target] = {
+                    'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
+                }
+                st.toast(f"{th_target} の設定を更新しました！", icon="💾")
+                st.rerun()
+
+        # デフォルトに戻すボタン（フォーム外）
+        if is_custom:
+            if st.button("デフォルト設定に戻す"):
+                del st.session_state['sensor_configs'][th_target]
+                st.toast(f"{th_target} をデフォルト設定に戻しました。", icon="↩️")
+                st.rerun()
+
+        st.divider()
+        st.caption(f"現在のデフォルト値: X={DEFAULT_THRESHOLDS['x']}G, Y={DEFAULT_THRESHOLDS['y']}G, Z={DEFAULT_THRESHOLDS['z']}G, 電圧={DEFAULT_THRESHOLDS['v']}V")
