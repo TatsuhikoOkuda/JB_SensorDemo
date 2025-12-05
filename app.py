@@ -9,8 +9,6 @@ st.set_page_config(page_title="振動センサー監視システム", layout="wi
 # --- 設定：エリアとセンサーの構成 ---
 AREAS = [f"エリア {chr(65+i)}" for i in range(13)]
 TOTAL_SENSORS = 110
-
-# 閾値定義
 THRESHOLD_X = 0.5
 THRESHOLD_Y = 0.5
 THRESHOLD_Z = 2.0
@@ -32,7 +30,6 @@ if "auth" in st.query_params and st.query_params["auth"] == "true":
 elif 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
-# --- ★選択リセット用のキー管理（ここを追加） ---
 if 'table_key' not in st.session_state:
     st.session_state['table_key'] = 0
 
@@ -46,7 +43,6 @@ def generate_area_data(sensors):
         z = np.random.normal(1.0, 0.05)
         v = np.random.normal(3.3, 0.02)
         status_list = []
-
         if rand_val > 0.90:
             if np.random.random() > 0.5:
                 x = np.random.uniform(0.6, 0.9)
@@ -57,12 +53,10 @@ def generate_area_data(sensors):
             if np.random.random() > 0.9:
                 v = np.random.uniform(2.0, 2.7)
                 status_list.append("電圧")
-
         if len(status_list) > 0:
             status_str = "⚠️ 異常 (" + ",".join(status_list) + ")"
         else:
             status_str = "正常"
-
         data.append({
             "センサーID": s,
             "状態": status_str,
@@ -100,7 +94,7 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- ポップアップ（ダイアログ）定義 ---
+# --- ポップアップ定義 ---
 try:
     dialog_decorator = st.dialog
 except AttributeError:
@@ -113,16 +107,11 @@ def show_sensor_dialog(sensor_id, status):
         st.error(f"現在、{status} が発生しています！")
     else:
         st.success("現在の状態は正常です。")
-        
     ts_data = generate_timeseries_data()
     st.subheader("振動データ (X, Y, Z)")
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
     st.subheader("電圧推移")
     st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
-    
-    # 閉じるボタン（なくても×ボタンで閉じられますが、明示的に配置）
-    if st.button("閉じる"):
-        st.rerun()
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -144,11 +133,7 @@ if not st.session_state['logged_in']:
 # --- メイン画面 ---
 st.sidebar.title("メニュー")
 st.sidebar.info(f"監視対象: {len(AREAS)}エリア / 計{TOTAL_SENSORS}センサー")
-
-menu = st.sidebar.radio(
-    "表示切替", 
-    ["リアルタイム監視", "グラフ分析", "異常履歴", "システム設定"]
-)
+menu = st.sidebar.radio("表示切替", ["リアルタイム監視", "グラフ分析", "異常履歴", "システム設定"])
 
 if st.sidebar.button("ログアウト"):
     st.session_state['logged_in'] = False
@@ -169,8 +154,7 @@ if menu == "リアルタイム監視":
         target_sensors = get_sensors_by_area(selected_area)
         st.session_state['display_df'] = generate_area_data(target_sensors)
         st.session_state['current_area'] = selected_area
-        # エリアが変わったらテーブルの選択状態もリセットする
-        st.session_state['table_key'] += 1
+        st.session_state['table_key'] += 1 
 
     with col_sel2:
         st.write("") 
@@ -191,7 +175,6 @@ if menu == "リアルタイム監視":
         idx_y = row.index.get_loc("Y軸 (G)")
         idx_z = row.index.get_loc("Z軸 (G)")
         idx_v = row.index.get_loc("電圧 (V)")
-
         if "異常" in row["状態"]:
             styles[idx_status] = 'color: red; font-weight: bold;'
             if row["X軸 (G)"] >= THRESHOLD_X:
@@ -204,27 +187,51 @@ if menu == "リアルタイム監視":
                 styles[idx_v] = 'background-color: #ffcccc; color: red; font-weight: bold;'
         return styles
 
-    # ★変更点：keyにセッション変数を使い、リセット可能にする
-    event = st.dataframe(
-        df_current.style.apply(highlight_cells, axis=1).format({
-            "X軸 (G)": "{:.3f}", "Y軸 (G)": "{:.3f}", "Z軸 (G)": "{:.3f}", "電圧 (V)": "{:.2f}"
-        }),
-        use_container_width=True,
-        hide_index=True,
-        height=400,
-        on_select="rerun",
-        selection_mode="single-row",
-        key=f"sensor_table_{st.session_state['table_key']}"  # ←ここがポイント
-    )
+    # ★変更点：テーブルを表示するための「空の枠（プレースホルダー）」を作る
+    table_placeholder = st.empty()
 
+    # 1. まず現在のキーでテーブルを描画する
+    current_key = f"sensor_table_{st.session_state['table_key']}"
+    
+    # プレースホルダーの中に描画
+    with table_placeholder.container():
+        event = st.dataframe(
+            df_current.style.apply(highlight_cells, axis=1).format({
+                "X軸 (G)": "{:.3f}", "Y軸 (G)": "{:.3f}", "Z軸 (G)": "{:.3f}", "電圧 (V)": "{:.2f}"
+            }),
+            use_container_width=True,
+            hide_index=True,
+            height=400,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=current_key
+        )
+
+    # 2. もしクリックされていたら
     if len(event.selection.rows) > 0:
         selected_index = event.selection.rows[0]
         selected_sensor_id = df_current.iloc[selected_index]["センサーID"]
         selected_status = df_current.iloc[selected_index]["状態"]
         
-        # ★重要：次回の描画時に選択を外すためにキーを更新しておく
+        # 次回用にキーを更新する
         st.session_state['table_key'] += 1
+        new_key = f"sensor_table_{st.session_state['table_key']}"
         
+        # ★ここが重要：ダイアログを出す「前」に、後ろのテーブルを「新しいキー（未選択）」で上書き描画してしまう
+        with table_placeholder.container():
+            st.dataframe(
+                df_current.style.apply(highlight_cells, axis=1).format({
+                    "X軸 (G)": "{:.3f}", "Y軸 (G)": "{:.3f}", "Z軸 (G)": "{:.3f}", "電圧 (V)": "{:.2f}"
+                }),
+                use_container_width=True,
+                hide_index=True,
+                height=400,
+                on_select="rerun",
+                selection_mode="single-row",
+                key=new_key # 新しいキーで描画＝チェックが外れた状態になる
+            )
+        
+        # 3. テーブルの見た目をリセットした後に、ポップアップを出す
         show_sensor_dialog(selected_sensor_id, selected_status)
 
 # --------------------------
