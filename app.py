@@ -11,10 +11,10 @@ st.set_page_config(page_title="振動センサー監視システム", layout="wi
 # --- CSS: ボタンの色設定 ---
 st.markdown("""
     <style>
-    /* 設定保存ボタン・Primaryボタンを水色にする */
+    /* 設定保存ボタン・Primaryボタン */
     div[data-testid="stFormSubmitButton"] > button,
     button[kind="primary"] {
-        background-color: #00BFFF !important; /* DeepSkyBlue */
+        background-color: #00BFFF !important;
         border-color: #00BFFF !important;
         color: white !important;
         font-weight: bold !important;
@@ -26,9 +26,9 @@ st.markdown("""
         color: white !important;
     }
 
-    /* 閉じるボタン用（Secondary）を黒色にする */
+    /* 閉じるボタン用（Secondary） */
     button[kind="secondary"] {
-        background-color: #333333 !important; /* ダークグレー/黒 */
+        background-color: #333333 !important;
         border-color: #333333 !important;
         color: white !important;
         font-size: 0.8rem !important;
@@ -74,12 +74,11 @@ if 'table_key' not in st.session_state:
 if 'sensor_configs' not in st.session_state:
     st.session_state['sensor_configs'] = {} 
 
-# ★修正：復帰通知の設定項目(enable_recovery)を追加
 if 'email_config' not in st.session_state:
     st.session_state['email_config'] = {
         "address": "admin@example.com",
         "enable_alert": True,
-        "enable_recovery": False # デフォルトはオフ
+        "enable_recovery": False
     }
 
 if 'reset_counts' not in st.session_state:
@@ -171,8 +170,8 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- Altairグラフ描画関数 ---
-def create_static_chart(df, y_columns, title, color_scheme='category10', is_voltage=False):
+# --- ★Altairグラフ描画関数（操作モード切替対応） ---
+def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=False, interactive=False):
     df_reset = df.reset_index()
     df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
     
@@ -196,7 +195,15 @@ def create_static_chart(df, y_columns, title, color_scheme='category10', is_volt
             alt.Tooltip('Value', title='値', format='.3f')
         ]
     )
-    return (line_layer + point_layer).properties(title=title, height=300)
+    
+    chart = (line_layer + point_layer).properties(title=title, height=300)
+    
+    # ★重要：スイッチがONの場合のみ、操作機能（ズーム・移動）を有効にする
+    if interactive:
+        # bind_y=False にすると、Y軸(縦)は固定され、時間軸(横)だけ動かせるようになります（推奨）
+        return chart.interactive(bind_y=False)
+    else:
+        return chart
 
 # --- ポップアップ定義 ---
 try:
@@ -206,6 +213,7 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
+    # 上部の×ボタンなし
     st.caption(f"選択されたセンサー: {sensor_id}")
     limits = get_sensor_thresholds(sensor_id)
     
@@ -217,29 +225,40 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
         st.success("現在の状態は正常です。")
     
     st.subheader("直近1分間の推移 (リアルタイム詳細)")
+
+    # ★追加：グラフ操作モードの切替スイッチ
+    col_t1, col_t2 = st.columns([2, 1])
+    with col_t2:
+        enable_interactive = st.toggle("🔍 グラフ操作モード (拡大・移動)", value=False)
+    
+    if enable_interactive:
+        st.caption("💡 マウスホイールで拡大縮小、ドラッグで左右に移動できます。")
+    
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
-    # グラフ描画
+    # グラフ描画（interactiveフラグを渡す）
     st.subheader("振動データ (X, Y, Z)")
-    chart_xyz = create_static_chart(
+    chart_xyz = create_chart(
         ts_data, 
         ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], 
-        "3軸加速度推移"
+        "3軸加速度推移",
+        interactive=enable_interactive
     )
     st.altair_chart(chart_xyz, use_container_width=True)
     
     st.subheader("電圧推移")
-    chart_v = create_static_chart(
+    chart_v = create_chart(
         ts_data,
         ['電圧 (V)'],
         "バッテリー電圧推移",
-        is_voltage=True
+        is_voltage=True,
+        interactive=enable_interactive
     )
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
-    # 閉じるボタン
+    # 閉じるボタン（右下に配置）
     col_spacer, col_btn = st.columns([8, 1]) 
     with col_btn:
         if st.button("閉じる", type="secondary", key="close_bottom"):
@@ -382,12 +401,15 @@ elif menu == "グラフ分析":
     st.divider()
     df = generate_timeseries_data(points=100, freq='min')
     
+    # ★ここもトグルスイッチを追加して統一感を出す
+    enable_interactive_main = st.toggle("🔍 グラフ操作モード (拡大・移動)", value=False, key="main_toggle")
+
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
-    chart_xyz = create_static_chart(df, ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], "")
+    chart_xyz = create_chart(df, ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], "", interactive=enable_interactive_main)
     st.altair_chart(chart_xyz, use_container_width=True)
 
     st.subheader(f"{target_sensor} - 電圧データ")
-    chart_v = create_static_chart(df, ['電圧 (V)'], "", is_voltage=True)
+    chart_v = create_chart(df, ['電圧 (V)'], "", is_voltage=True, interactive=enable_interactive_main)
     st.altair_chart(chart_v, use_container_width=True)
 
 # --------------------------
@@ -412,12 +434,10 @@ elif menu == "システム設定":
         with st.form("email_form"):
             current_email = st.session_state['email_config']['address']
             current_enable = st.session_state['email_config']['enable_alert']
-            # ★追加：復帰時通知設定の取得
             current_recovery = st.session_state['email_config'].get('enable_recovery', False)
             
             new_email = st.text_input("通報先メールアドレス", value=current_email)
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
-            # ★追加：チェックボックス
             new_recovery = st.checkbox("復帰時にもメールを送信する", value=current_recovery)
             
             submitted = st.form_submit_button("設定を保存")
@@ -445,8 +465,7 @@ elif menu == "システム設定":
             msg_placeholder_test = st.empty()
             if st.session_state['email_config']['enable_alert']:
                 with st.spinner("メールサーバーに接続中..."):
-                    time.sleep(1.5)
-                # ★修正：シミュレーションであることを明記
+                    time.sleep(1.0)
                 st.toast(f"[Simulation] 送信成功: {st.session_state['email_config']['address']}", icon="📧")
                 msg_placeholder_test.success(f"✅ [仮想送信成功] 宛先: {st.session_state['email_config']['address']} (※実際には送信されません)")
                 time.sleep(3)
