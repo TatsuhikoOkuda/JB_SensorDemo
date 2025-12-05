@@ -67,10 +67,23 @@ def generate_area_data(sensors):
         })
     return pd.DataFrame(data)
 
-def generate_timeseries_data(points=60):
+# ★修正：引数 freq を追加し、秒単位('sec')と分単位('min')を切り替え可能に
+def generate_timeseries_data(points=60, freq='min'):
     now = datetime.now()
-    dates = [now - timedelta(minutes=i) for i in range(points)]
+    dates = []
+    
+    # データの刻み幅を判定
+    for i in range(points):
+        if freq == 'sec':
+            # 秒単位（1分間のグラフ用）
+            d = now - timedelta(seconds=i)
+        else:
+            # 分単位（長時間分析用）
+            d = now - timedelta(minutes=i)
+        dates.append(d)
+        
     dates.reverse()
+    
     df = pd.DataFrame({
         'timestamp': dates,
         'X軸 (G)': np.random.normal(0, 0.1, points),
@@ -107,9 +120,14 @@ def show_sensor_dialog(sensor_id, status):
         st.error(f"現在、{status} が発生しています！")
     else:
         st.success("現在の状態は正常です。")
-    ts_data = generate_timeseries_data()
+    
+    # ★修正：ここを「直近1分間」に変更し、データを秒単位('sec')で生成
+    st.subheader("直近1分間の推移 (リアルタイム詳細)")
+    ts_data = generate_timeseries_data(points=60, freq='sec') # 60ポイント×1秒 = 1分
+    
     st.subheader("振動データ (X, Y, Z)")
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
+    
     st.subheader("電圧推移")
     st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
 
@@ -187,13 +205,9 @@ if menu == "リアルタイム監視":
                 styles[idx_v] = 'background-color: #ffcccc; color: red; font-weight: bold;'
         return styles
 
-    # ★変更点：テーブルを表示するための「空の枠（プレースホルダー）」を作る
     table_placeholder = st.empty()
-
-    # 1. まず現在のキーでテーブルを描画する
     current_key = f"sensor_table_{st.session_state['table_key']}"
     
-    # プレースホルダーの中に描画
     with table_placeholder.container():
         event = st.dataframe(
             df_current.style.apply(highlight_cells, axis=1).format({
@@ -207,17 +221,14 @@ if menu == "リアルタイム監視":
             key=current_key
         )
 
-    # 2. もしクリックされていたら
     if len(event.selection.rows) > 0:
         selected_index = event.selection.rows[0]
         selected_sensor_id = df_current.iloc[selected_index]["センサーID"]
         selected_status = df_current.iloc[selected_index]["状態"]
         
-        # 次回用にキーを更新する
         st.session_state['table_key'] += 1
         new_key = f"sensor_table_{st.session_state['table_key']}"
         
-        # ★ここが重要：ダイアログを出す「前」に、後ろのテーブルを「新しいキー（未選択）」で上書き描画してしまう
         with table_placeholder.container():
             st.dataframe(
                 df_current.style.apply(highlight_cells, axis=1).format({
@@ -228,10 +239,9 @@ if menu == "リアルタイム監視":
                 height=400,
                 on_select="rerun",
                 selection_mode="single-row",
-                key=new_key # 新しいキーで描画＝チェックが外れた状態になる
+                key=new_key
             )
         
-        # 3. テーブルの見た目をリセットした後に、ポップアップを出す
         show_sensor_dialog(selected_sensor_id, selected_status)
 
 # --------------------------
@@ -249,7 +259,10 @@ elif menu == "グラフ分析":
         period = st.selectbox("表示期間", ["1時間", "24時間", "1週間"])
 
     st.divider()
-    df = generate_timeseries_data(points=100)
+    
+    # ★修正：分析画面では従来どおり分単位のデータを使用（freq='min'）
+    df = generate_timeseries_data(points=100, freq='min')
+    
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
     st.line_chart(df[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
     st.subheader(f"{target_sensor} - 電圧データ")
