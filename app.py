@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import time
-import altair as alt  # ★追加：グラフの詳細設定用
+import altair as alt
 from datetime import datetime, timedelta
 
 # ページ設定
@@ -11,7 +11,7 @@ st.set_page_config(page_title="振動センサー監視システム", layout="wi
 # --- CSS: ボタンの色設定 ---
 st.markdown("""
     <style>
-    /* 設定保存ボタンを水色にする */
+    /* 設定保存ボタン */
     div[data-testid="stFormSubmitButton"] > button {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
@@ -28,7 +28,7 @@ st.markdown("""
         border-color: #00BFFF !important;
         color: white !important;
     }
-    /* テスト送信ボタンや閉じるボタンも水色にする */
+    /* テスト送信ボタンや閉じるボタン */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
@@ -165,24 +165,48 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- ★Altairを使ったグラフ描画関数（スクロール拡大無効化） ---
-def create_static_chart(df, y_columns, title, color_scheme='category10'):
-    # データフレームをLong形式に変換（Altair用）
+# --- ★Altairグラフ描画関数（スクロール無効＋ツールチップ強化） ---
+def create_static_chart(df, y_columns, title, color_scheme='category10', is_voltage=False):
     df_reset = df.reset_index()
     df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
     
-    # チャート定義
-    chart = alt.Chart(df_melted).mark_line().encode(
-        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-        y=alt.Y('Value', title='値'),
-        color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
-        tooltip=['timestamp', 'Metric', 'Value'] # ホバー時のツールチップは有効にする
-    ).properties(
-        title=title,
-        height=300
-    )
-    # ★重要: .interactive() を呼ばないことで、ズーム/パンを無効化する
-    return chart
+    # 1. 基本の線グラフ
+    # 電圧の場合は色を指定、それ以外はスキーマを使用
+    if is_voltage:
+        line_layer = alt.Chart(df_melted).mark_line(color='#ffaa00').encode(
+            x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
+            y=alt.Y('Value', title='値', scale=alt.Scale(zero=False)), # 変化が見やすいようにゼロ始点にしない
+        )
+    else:
+        line_layer = alt.Chart(df_melted).mark_line().encode(
+            x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
+            y=alt.Y('Value', title='値'),
+            color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
+        )
+
+    # 2. ツールチップ用の透明な点（ヒットエリア）
+    # 線の上だけでなく、点の周りでも反応するようにサイズを大きく設定
+    if is_voltage:
+        point_layer = line_layer.mark_circle(size=100).encode(
+            opacity=alt.value(0), # 透明にして見えなくする
+            tooltip=[
+                alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
+                alt.Tooltip('Metric', title='項目'),
+                alt.Tooltip('Value', title='値', format='.3f')
+            ]
+        )
+    else:
+        point_layer = line_layer.mark_circle(size=100).encode(
+            opacity=alt.value(0),
+            tooltip=[
+                alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
+                alt.Tooltip('Metric', title='項目'),
+                alt.Tooltip('Value', title='値', format='.3f')
+            ]
+        )
+    
+    # 線と点を重ねる（interactive()は呼ばない＝ズーム無効）
+    return (line_layer + point_layer).properties(title=title, height=300)
 
 # --- ポップアップ定義 ---
 try:
@@ -192,8 +216,8 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
-    # ★修正：閉じるボタンを一番上に配置（type="primary"で水色強調）
-    if st.button("この画面を閉じる", type="primary", key="close_top"):
+    # 【上】閉じるボタン
+    if st.button("この画面を閉じる (Top)", type="primary", key="close_top"):
         st.rerun()
         
     st.divider()
@@ -212,8 +236,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
-    # ★修正：Altairチャートを使用して描画（ズーム無効）
-    
     # 1. XYZグラフ
     st.subheader("振動データ (X, Y, Z)")
     chart_xyz = create_static_chart(
@@ -225,16 +247,18 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     
     # 2. 電圧グラフ
     st.subheader("電圧推移")
-    # 電圧用に色を変える（オレンジ系）
-    ts_data_v = ts_data.reset_index()[['timestamp', '電圧 (V)']]
-    chart_v = alt.Chart(ts_data_v).mark_line(color='#ffaa00').encode(
-        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-        y=alt.Y('電圧 (V)', title='電圧 (V)', scale=alt.Scale(domain=[2.0, 4.0])), # 電圧の見やすい範囲
-        tooltip=['timestamp', '電圧 (V)']
-    ).properties(
-        height=250
+    chart_v = create_static_chart(
+        ts_data,
+        ['電圧 (V)'],
+        "バッテリー電圧推移",
+        is_voltage=True
     )
     st.altair_chart(chart_v, use_container_width=True)
+    
+    st.divider()
+    # 【下】閉じるボタン（スクロールしても必ず押せるように配置）
+    if st.button("この画面を閉じる (Bottom)", type="primary", key="close_bottom"):
+        st.rerun()
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -373,17 +397,12 @@ elif menu == "グラフ分析":
     st.divider()
     df = generate_timeseries_data(points=100, freq='min')
     
-    # ★ここもAltairに置き換えて操作感を統一
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
     chart_xyz = create_static_chart(df, ['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)'], "")
     st.altair_chart(chart_xyz, use_container_width=True)
 
     st.subheader(f"{target_sensor} - 電圧データ")
-    chart_v = alt.Chart(df.reset_index()).mark_line(color='#ffaa00').encode(
-        x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-        y=alt.Y('電圧 (V)', title='電圧 (V)', scale=alt.Scale(domain=[2.0, 4.0])),
-        tooltip=['timestamp', '電圧 (V)']
-    ).properties(height=250)
+    chart_v = create_static_chart(df, ['電圧 (V)'], "", is_voltage=True)
     st.altair_chart(chart_v, use_container_width=True)
 
 # --------------------------
@@ -452,7 +471,6 @@ elif menu == "システム設定":
             th_sensors = get_sensors_by_area(th_area)
             th_target = st.selectbox("設定するセンサーを選択", th_sensors, key="th_target")
         
-        # リセット回数の初期化
         if th_target not in st.session_state['reset_counts']:
             st.session_state['reset_counts'][th_target] = 0
             
