@@ -67,23 +67,19 @@ def generate_area_data(sensors):
         })
     return pd.DataFrame(data)
 
-# ★修正：引数 freq を追加し、秒単位('sec')と分単位('min')を切り替え可能に
-def generate_timeseries_data(points=60, freq='min'):
+# ★修正：latest_values引数を追加。ここに辞書を渡すと、グラフの最新値をその値に強制一致させます。
+def generate_timeseries_data(points=60, freq='min', latest_values=None):
     now = datetime.now()
     dates = []
-    
-    # データの刻み幅を判定
     for i in range(points):
         if freq == 'sec':
-            # 秒単位（1分間のグラフ用）
             d = now - timedelta(seconds=i)
         else:
-            # 分単位（長時間分析用）
             d = now - timedelta(minutes=i)
         dates.append(d)
-        
-    dates.reverse()
+    dates.reverse() # 古い順に並べる
     
+    # ベースの乱数生成
     df = pd.DataFrame({
         'timestamp': dates,
         'X軸 (G)': np.random.normal(0, 0.1, points),
@@ -91,6 +87,15 @@ def generate_timeseries_data(points=60, freq='min'):
         'Z軸 (G)': np.random.normal(1.0, 0.05, points),
         '電圧 (V)': np.random.normal(3.3, 0.01, points)
     })
+    
+    # ★重要：最新の値（一番下の行）を、テーブルの値で上書きする
+    if latest_values is not None:
+        # iloc[-1] は「最後の行（最新日時）」を指します
+        df.iloc[-1, df.columns.get_loc('X軸 (G)')] = latest_values['x']
+        df.iloc[-1, df.columns.get_loc('Y軸 (G)')] = latest_values['y']
+        df.iloc[-1, df.columns.get_loc('Z軸 (G)')] = latest_values['z']
+        df.iloc[-1, df.columns.get_loc('電圧 (V)')] = latest_values['v']
+        
     return df.set_index('timestamp')
 
 def generate_mock_history():
@@ -113,23 +118,28 @@ try:
 except AttributeError:
     dialog_decorator = st.experimental_dialog
 
+# ★修正：引数に x, y, z, v を追加して受け取れるようにする
 @dialog_decorator("詳細トレンド分析", width="large")
-def show_sensor_dialog(sensor_id, status):
+def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.caption(f"選択されたセンサー: {sensor_id}")
     if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
     else:
         st.success("現在の状態は正常です。")
     
-    # ★修正：ここを「直近1分間」に変更し、データを秒単位('sec')で生成
     st.subheader("直近1分間の推移 (リアルタイム詳細)")
-    ts_data = generate_timeseries_data(points=60, freq='sec') # 60ポイント×1秒 = 1分
+    
+    # ★修正：テーブルの値を「最新値」としてグラフ生成関数に渡す
+    latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
+    ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
     st.subheader("振動データ (X, Y, Z)")
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
     
     st.subheader("電圧推移")
     st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
+    
+    st.caption("※グラフの右端（最新点）が、一覧表の数値と一致します。")
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -223,8 +233,14 @@ if menu == "リアルタイム監視":
 
     if len(event.selection.rows) > 0:
         selected_index = event.selection.rows[0]
-        selected_sensor_id = df_current.iloc[selected_index]["センサーID"]
-        selected_status = df_current.iloc[selected_index]["状態"]
+        # ★修正：選択された行から、4つの数値も取得する
+        sel_row = df_current.iloc[selected_index]
+        sel_id = sel_row["センサーID"]
+        sel_status = sel_row["状態"]
+        sel_x = sel_row["X軸 (G)"]
+        sel_y = sel_row["Y軸 (G)"]
+        sel_z = sel_row["Z軸 (G)"]
+        sel_v = sel_row["電圧 (V)"]
         
         st.session_state['table_key'] += 1
         new_key = f"sensor_table_{st.session_state['table_key']}"
@@ -242,7 +258,8 @@ if menu == "リアルタイム監視":
                 key=new_key
             )
         
-        show_sensor_dialog(selected_sensor_id, selected_status)
+        # 取得した数値を引数として渡す
+        show_sensor_dialog(sel_id, sel_status, sel_x, sel_y, sel_z, sel_v)
 
 # --------------------------
 # 2. グラフ分析画面
@@ -259,10 +276,7 @@ elif menu == "グラフ分析":
         period = st.selectbox("表示期間", ["1時間", "24時間", "1週間"])
 
     st.divider()
-    
-    # ★修正：分析画面では従来どおり分単位のデータを使用（freq='min'）
     df = generate_timeseries_data(points=100, freq='min')
-    
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
     st.line_chart(df[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
     st.subheader(f"{target_sensor} - 電圧データ")
