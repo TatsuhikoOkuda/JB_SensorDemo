@@ -6,9 +6,15 @@ from datetime import datetime, timedelta
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
-# --- 設定：エリアとセンサーの構成定義 ---
+# --- 設定：エリアとセンサーの構成 ---
 AREAS = [f"エリア {chr(65+i)}" for i in range(13)]
 TOTAL_SENSORS = 110
+
+# デモ用の閾値定義（この値を超えたら赤くする）
+THRESHOLD_X = 0.5
+THRESHOLD_Y = 0.5
+THRESHOLD_Z = 2.0  # 重力加速度1G + 変動分
+THRESHOLD_VOLT_LOW = 2.8
 
 def get_sensors_by_area(area_name):
     area_index = AREAS.index(area_name)
@@ -26,24 +32,47 @@ if "auth" in st.query_params and st.query_params["auth"] == "true":
 elif 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
-# --- データ生成関数 ---
+# --- データ生成関数（異常内容を具体的に作成） ---
 def generate_area_data(sensors):
     data = []
     for s in sensors:
-        is_alert = np.random.random() > 0.95
-        if is_alert:
-            x = np.random.uniform(0.5, 0.8)
-            status = "⚠️ 警報"
+        # デモ用：90%正常、10%でどれかが異常になる
+        rand_val = np.random.random()
+        
+        # デフォルト（正常値）
+        x = np.random.normal(0.02, 0.05)
+        y = np.random.normal(0.02, 0.05)
+        z = np.random.normal(1.0, 0.05)
+        v = np.random.normal(3.3, 0.02)
+        status_list = []
+
+        # 異常パターンの生成
+        if rand_val > 0.90:
+            # X軸異常
+            if np.random.random() > 0.5:
+                x = np.random.uniform(0.6, 0.9) # 閾値0.5超え
+                status_list.append("X軸")
+            # Y軸異常
+            if np.random.random() > 0.8:
+                y = np.random.uniform(0.6, 0.9)
+                status_list.append("Y軸")
+            # 電圧低下
+            if np.random.random() > 0.9:
+                v = np.random.uniform(2.0, 2.7) # 閾値2.8未満
+                status_list.append("電圧")
+
+        if len(status_list) > 0:
+            status_str = "⚠️ 異常 (" + ",".join(status_list) + ")"
         else:
-            x = np.random.normal(0.02, 0.05)
-            status = "正常"
+            status_str = "正常"
+
         data.append({
             "センサーID": s,
-            "状態": status,
+            "状態": status_str,
             "X軸 (G)": x,
-            "Y軸 (G)": np.random.normal(0.01, 0.05),
-            "Z軸 (G)": np.random.normal(0.98, 0.05),
-            "電圧 (V)": np.random.normal(3.3, 0.02)
+            "Y軸 (G)": y,
+            "Z軸 (G)": z,
+            "電圧 (V)": v
         })
     return pd.DataFrame(data)
 
@@ -69,10 +98,10 @@ def generate_mock_history():
             t.strftime('%Y-%m-%d %H:%M:%S'),
             f"Sensor-{str(np.random.randint(1,110)).zfill(3)}",
             np.random.choice(AREAS),
-            "X軸振動超過",
+            "X軸異常", # 文言変更
             f"{np.random.uniform(0.6, 1.2):.2f}"
         ])
-    return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "警報種別", "検測値"])
+    return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
 # --- ポップアップ（ダイアログ）定義 ---
 try:
@@ -83,15 +112,19 @@ except AttributeError:
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status):
     st.caption(f"選択されたセンサー: {sensor_id}")
-    if status != "正常":
+    if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
     else:
         st.success("現在の状態は正常です。")
-    st.subheader("直近1時間の推移")
+        
     ts_data = generate_timeseries_data()
+    
+    st.subheader("振動データ (X, Y, Z)")
     st.line_chart(ts_data[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
+    
     st.subheader("電圧推移")
-    st.area_chart(ts_data[['電圧 (V)']], color="#ffaa00")
+    # ★変更：面グラフ(area_chart) -> 折れ線グラフ(line_chart)
+    st.line_chart(ts_data[['電圧 (V)']], color="#ffaa00")
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
@@ -114,10 +147,9 @@ if not st.session_state['logged_in']:
 st.sidebar.title("メニュー")
 st.sidebar.info(f"監視対象: {len(AREAS)}エリア / 計{TOTAL_SENSORS}センサー")
 
-# メニューに「グラフ分析」を戻しました
 menu = st.sidebar.radio(
     "表示切替", 
-    ["リアルタイム監視", "グラフ分析", "警報履歴", "システム設定"]
+    ["リアルタイム監視", "グラフ分析", "異常履歴", "システム設定"] # 文言変更
 )
 
 if st.sidebar.button("ログアウト"):
@@ -135,7 +167,7 @@ if menu == "リアルタイム監視":
     with col_sel1:
         selected_area = st.selectbox("監視エリアを選択", AREAS)
     
-    # データ固定化ロジック
+    # データ固定化
     if 'current_area' not in st.session_state or st.session_state['current_area'] != selected_area:
         target_sensors = get_sensors_by_area(selected_area)
         st.session_state['display_df'] = generate_area_data(target_sensors)
@@ -153,11 +185,36 @@ if menu == "リアルタイム監視":
     st.markdown(f"**{selected_area}** のセンサー一覧")
     st.caption("行をクリックすると詳細グラフがポップアップします。")
 
-    def highlight_alert(row):
-        return ['background-color: #ffcccc' if row['状態'] != '正常' else '' for _ in row]
+    # ★変更：異常がある「特定のセル」だけを赤くするスタイル関数
+    def highlight_cells(row):
+        styles = ['' for _ in row] # デフォルトはスタイルなし
+        
+        # インデックスの特定（列名が変わっても対応できるように）
+        idx_status = row.index.get_loc("状態")
+        idx_x = row.index.get_loc("X軸 (G)")
+        idx_y = row.index.get_loc("Y軸 (G)")
+        idx_z = row.index.get_loc("Z軸 (G)")
+        idx_v = row.index.get_loc("電圧 (V)")
+
+        # 状態が異常なら、その内訳を見てセルを赤くする
+        if "異常" in row["状態"]:
+            # 状態カラム自体も赤くする
+            styles[idx_status] = 'color: red; font-weight: bold;'
+            
+            # 各数値の判定
+            if row["X軸 (G)"] >= THRESHOLD_X:
+                styles[idx_x] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            if row["Y軸 (G)"] >= THRESHOLD_Y:
+                styles[idx_y] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            if row["Z軸 (G)"] >= THRESHOLD_Z:
+                styles[idx_z] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+            if row["電圧 (V)"] < THRESHOLD_VOLT_LOW:
+                styles[idx_v] = 'background-color: #ffcccc; color: red; font-weight: bold;'
+                
+        return styles
 
     event = st.dataframe(
-        df_current.style.apply(highlight_alert, axis=1).format({
+        df_current.style.apply(highlight_cells, axis=1).format({
             "X軸 (G)": "{:.3f}", "Y軸 (G)": "{:.3f}", "Z軸 (G)": "{:.3f}", "電圧 (V)": "{:.2f}"
         }),
         use_container_width=True,
@@ -174,44 +231,36 @@ if menu == "リアルタイム監視":
         show_sensor_dialog(selected_sensor_id, selected_status)
 
 # --------------------------
-# 2. グラフ分析画面 (復活)
+# 2. グラフ分析画面
 # --------------------------
 elif menu == "グラフ分析":
     st.title("📈 グラフ分析")
     
-    # エリア -> センサー の2段階選択にする
     col1, col2, col3 = st.columns(3)
-    
     with col1:
-        # エリア選択
         target_area_graph = st.selectbox("エリア選択", AREAS)
-        # そのエリアのセンサーリストを取得
         sensors_in_area = get_sensors_by_area(target_area_graph)
-        
     with col2:
-        # センサー選択
         target_sensor = st.selectbox("対象センサー", sensors_in_area)
-        
     with col3:
-        # 期間選択
         period = st.selectbox("表示期間", ["1時間", "24時間", "1週間"])
 
     st.divider()
 
-    # グラフ描画
-    df = generate_timeseries_data(points=100) # グラフ用にデータ点を増やす
+    df = generate_timeseries_data(points=100)
     
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
     st.line_chart(df[['X軸 (G)', 'Y軸 (G)', 'Z軸 (G)']])
 
     st.subheader(f"{target_sensor} - 電圧データ")
-    st.area_chart(df[['電圧 (V)']], color="#ffaa00")
+    # ★変更：折れ線グラフに変更
+    st.line_chart(df[['電圧 (V)']], color="#ffaa00")
 
 # --------------------------
-# 3. 警報履歴画面
+# 3. 異常履歴画面
 # --------------------------
-elif menu == "警報履歴":
-    st.title("⚠️ 全エリア警報履歴")
+elif menu == "異常履歴": # 文言変更
+    st.title("⚠️ 全エリア異常履歴")
     history_df = generate_mock_history()
     st.dataframe(history_df, use_container_width=True, hide_index=True)
 
@@ -230,4 +279,6 @@ elif menu == "システム設定":
         }))
     with tab2:
         st.write("全センサー共通設定")
-        st.number_input("X軸 警報閾値 (G)", value=0.5)
+        c1, c2 = st.columns(2)
+        c1.number_input("X/Y軸 異常判定閾値 (G)", value=THRESHOLD_X)
+        c2.number_input("Z軸 異常判定閾値 (G)", value=THRESHOLD_Z)
