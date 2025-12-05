@@ -26,15 +26,15 @@ st.markdown("""
         color: white !important;
     }
 
-    /* ★追加：閉じるボタン用（Secondary）を黒色にする */
+    /* 閉じるボタン用（Secondary）を黒色にする */
     button[kind="secondary"] {
         background-color: #333333 !important; /* ダークグレー/黒 */
         border-color: #333333 !important;
         color: white !important;
-        font-size: 0.8rem !important; /* 少し文字を小さく */
+        font-size: 0.8rem !important;
     }
     button[kind="secondary"]:hover {
-        background-color: #000000 !important; /* 真っ黒 */
+        background-color: #000000 !important;
         border-color: #000000 !important;
         color: white !important;
     }
@@ -74,10 +74,12 @@ if 'table_key' not in st.session_state:
 if 'sensor_configs' not in st.session_state:
     st.session_state['sensor_configs'] = {} 
 
+# ★修正：復帰通知の設定項目(enable_recovery)を追加
 if 'email_config' not in st.session_state:
     st.session_state['email_config'] = {
         "address": "admin@example.com",
-        "enable_alert": True
+        "enable_alert": True,
+        "enable_recovery": False # デフォルトはオフ
     }
 
 if 'reset_counts' not in st.session_state:
@@ -204,7 +206,6 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
-    # 上部の×ボタンは削除しました
     st.caption(f"選択されたセンサー: {sensor_id}")
     limits = get_sensor_thresholds(sensor_id)
     
@@ -219,6 +220,7 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
+    # グラフ描画
     st.subheader("振動データ (X, Y, Z)")
     chart_xyz = create_static_chart(
         ts_data, 
@@ -237,12 +239,9 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
-    
-    # ★変更：閉じるボタンを右下に小さく配置
-    # 左側に空白(spacer)を作り、右側にボタンを置く
+    # 閉じるボタン
     col_spacer, col_btn = st.columns([8, 1]) 
     with col_btn:
-        # type="secondary" にすることで、冒頭で設定した黒色CSSが適用されます
         if st.button("閉じる", type="secondary", key="close_bottom"):
             st.rerun()
 
@@ -413,9 +412,13 @@ elif menu == "システム設定":
         with st.form("email_form"):
             current_email = st.session_state['email_config']['address']
             current_enable = st.session_state['email_config']['enable_alert']
+            # ★追加：復帰時通知設定の取得
+            current_recovery = st.session_state['email_config'].get('enable_recovery', False)
             
             new_email = st.text_input("通報先メールアドレス", value=current_email)
             new_enable = st.checkbox("異常発生時にメールを送信する", value=current_enable)
+            # ★追加：チェックボックス
+            new_recovery = st.checkbox("復帰時にもメールを送信する", value=current_recovery)
             
             submitted = st.form_submit_button("設定を保存")
         
@@ -427,6 +430,7 @@ elif menu == "システム設定":
             else:
                 st.session_state['email_config']['address'] = new_email
                 st.session_state['email_config']['enable_alert'] = new_enable
+                st.session_state['email_config']['enable_recovery'] = new_recovery
                 msg_placeholder_mail.success("✅ 成功：メール設定を保存しました。")
                 time.sleep(2)
                 msg_placeholder_mail.empty()
@@ -435,13 +439,16 @@ elif menu == "システム設定":
         st.divider()
         st.subheader("送信テスト")
         st.write("設定したアドレスにテストメールを送信します（シミュレーション）。")
+        st.info("※ このボタンは通信のシミュレーションのみを行います。実際のメールは送信されません。")
+        
         if st.button("テストメール送信実行", type="primary"):
             msg_placeholder_test = st.empty()
             if st.session_state['email_config']['enable_alert']:
                 with st.spinner("メールサーバーに接続中..."):
-                    time.sleep(1.0)
-                st.toast(f"送信成功！ {st.session_state['email_config']['address']} にメールを送りました。", icon="📧")
-                msg_placeholder_test.success(f"✅ [送信成功] 宛先: {st.session_state['email_config']['address']}")
+                    time.sleep(1.5)
+                # ★修正：シミュレーションであることを明記
+                st.toast(f"[Simulation] 送信成功: {st.session_state['email_config']['address']}", icon="📧")
+                msg_placeholder_test.success(f"✅ [仮想送信成功] 宛先: {st.session_state['email_config']['address']} (※実際には送信されません)")
                 time.sleep(3)
                 msg_placeholder_test.empty()
             else:
