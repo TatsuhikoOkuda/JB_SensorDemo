@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import time
 import altair as alt
-from datetime import datetime, timedelta, timezone  # ★timezoneを追加
+from datetime import datetime, timedelta, timezone
 
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
@@ -133,9 +133,7 @@ def generate_area_data(sensors):
     return pd.DataFrame(data)
 
 def generate_timeseries_data(points=60, freq='min', latest_values=None):
-    # ★修正：現在時刻をJST（日本時間）で取得
     now = datetime.now(JST)
-    
     dates = []
     for i in range(points):
         if freq == 'sec':
@@ -163,7 +161,6 @@ def generate_timeseries_data(points=60, freq='min', latest_values=None):
 
 def generate_mock_history():
     data = []
-    # ★修正：履歴もJST基準で生成
     now = datetime.now(JST)
     for i in range(10):
         t = now - timedelta(hours=i*2)
@@ -176,27 +173,29 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- Altairグラフ描画関数 ---
+# --- ★Altairグラフ描画関数（Y軸範囲固定） ---
 def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=False, interactive=False):
     df_reset = df.reset_index()
     df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
     
     if is_voltage:
+        # 電圧設定: 2.0V 〜 4.0V
         line_layer = alt.Chart(df_melted).mark_line(color='#ffaa00').encode(
             x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-            y=alt.Y('Value', title='値', scale=alt.Scale(zero=False)), 
+            y=alt.Y('Value', title='値 (V)', scale=alt.Scale(domain=[2.0, 4.0])), 
         )
     else:
+        # 加速度設定: -2.0G 〜 +2.0G
         line_layer = alt.Chart(df_melted).mark_line().encode(
             x=alt.X('timestamp', title='時間', axis=alt.Axis(format='%H:%M:%S')),
-            y=alt.Y('Value', title='値'),
+            y=alt.Y('Value', title='値 (G)', scale=alt.Scale(domain=[-2.0, 2.0])),
             color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
         )
 
     point_layer = line_layer.mark_circle(size=100).encode(
         opacity=alt.value(0),
         tooltip=[
-            alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'), # JSTで表示されます
+            alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
             alt.Tooltip('Metric', title='項目'),
             alt.Tooltip('Value', title='値', format='.3f')
         ]
@@ -205,6 +204,7 @@ def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=Fal
     chart = (line_layer + point_layer).properties(title=title, height=300)
     
     if interactive:
+        # Y軸は固定のまま、時間軸(X)だけ動かせるようにする
         return chart.interactive(bind_y=False)
     else:
         return chart
@@ -259,6 +259,7 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
+    # 閉じるボタン（右下に配置）
     col_spacer, col_btn = st.columns([8, 1]) 
     with col_btn:
         if st.button("閉じる", type="secondary", key="close_bottom"):
