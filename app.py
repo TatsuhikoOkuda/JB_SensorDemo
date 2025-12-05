@@ -7,10 +7,10 @@ from datetime import datetime, timedelta
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
 
-# --- CSS: ボタンの色を水色にする ---
+# --- CSS: ボタンの色設定 ---
 st.markdown("""
     <style>
-    /* 設定保存ボタン */
+    /* 設定保存ボタンを水色にする */
     div[data-testid="stFormSubmitButton"] > button {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
@@ -22,7 +22,12 @@ st.markdown("""
         border-color: #009ACD !important;
         color: white !important;
     }
-    /* テスト送信ボタンなど */
+    div[data-testid="stFormSubmitButton"] > button:active {
+        background-color: #00BFFF !important;
+        border-color: #00BFFF !important;
+        color: white !important;
+    }
+    /* テスト送信ボタンなども水色にする */
     button[kind="primary"] {
         background-color: #00BFFF !important;
         border-color: #00BFFF !important;
@@ -70,8 +75,8 @@ if 'email_config' not in st.session_state:
         "enable_alert": True
     }
 
-if 'reset_success_msg' not in st.session_state:
-    st.session_state['reset_success_msg'] = None
+if 'reset_counts' not in st.session_state:
+    st.session_state['reset_counts'] = {}
 
 # --- ヘルパー関数 ---
 def get_sensor_thresholds(sensor_id):
@@ -79,21 +84,6 @@ def get_sensor_thresholds(sensor_id):
         return st.session_state['sensor_configs'][sensor_id]
     else:
         return DEFAULT_THRESHOLDS
-
-# ★修正：リセット用コールバック関数
-def reset_thresholds_callback(sensor_id):
-    # 1. 保存データを削除
-    if sensor_id in st.session_state['sensor_configs']:
-        del st.session_state['sensor_configs'][sensor_id]
-    
-    # 2. ★重要：値を代入するのではなく、キー自体を削除してリセットする
-    # これにより "The widget with key ... was created with a default value..." エラーを回避
-    keys_to_reset = [f"x_{sensor_id}", f"y_{sensor_id}", f"z_{sensor_id}", f"v_{sensor_id}"]
-    for k in keys_to_reset:
-        if k in st.session_state:
-            del st.session_state[k]
-    
-    st.session_state['reset_success_msg'] = f"✅ 成功：{sensor_id} をデフォルト設定に戻しました。"
 
 # --- データ生成関数 ---
 def generate_area_data(sensors):
@@ -183,8 +173,6 @@ except AttributeError:
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.caption(f"選択されたセンサー: {sensor_id}")
-    limits = get_sensor_thresholds(sensor_id)
-    
     if "異常" in status:
         st.error(f"現在、{status} が発生しています！")
         if st.session_state['email_config']['enable_alert']:
@@ -261,7 +249,6 @@ if menu == "リアルタイム監視":
         styles = ['' for _ in row]
         s_id = row["センサーID"]
         limits = get_sensor_thresholds(s_id)
-        
         idx_status = row.index.get_loc("状態")
         idx_x = row.index.get_loc("X軸 (G)")
         idx_y = row.index.get_loc("Y軸 (G)")
@@ -383,7 +370,6 @@ elif menu == "システム設定":
                 msg_placeholder_mail.success("✅ 成功：メール設定を保存しました。")
                 time.sleep(2)
                 msg_placeholder_mail.empty()
-                # 念のためリロード
                 st.rerun()
 
         st.divider()
@@ -403,11 +389,6 @@ elif menu == "システム設定":
 
     # --- タブ2: 閾値設定 ---
     with tab_threshold:
-        # リセット成功メッセージがあれば表示して消す
-        if st.session_state['reset_success_msg']:
-            st.success(st.session_state['reset_success_msg'])
-            st.session_state['reset_success_msg'] = None
-        
         st.subheader("センサー別 閾値詳細設定")
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -416,6 +397,10 @@ elif menu == "システム設定":
             th_sensors = get_sensors_by_area(th_area)
             th_target = st.selectbox("設定するセンサーを選択", th_sensors, key="th_target")
         
+        # リセット回数の初期化
+        if th_target not in st.session_state['reset_counts']:
+            st.session_state['reset_counts'][th_target] = 0
+            
         current_limits = get_sensor_thresholds(th_target)
         is_custom = th_target in st.session_state['sensor_configs']
         
@@ -423,7 +408,10 @@ elif menu == "システム設定":
 
         with st.form("threshold_form"):
             c1, c2, c3, c4 = st.columns(4)
-            key_suffix = th_target
+            # リセット回数をKeyに含める
+            reset_id = st.session_state['reset_counts'][th_target]
+            key_suffix = f"{th_target}_{reset_id}"
+            
             with c1:
                 new_x = st.number_input("X軸 閾値 (G)", value=float(current_limits['x']), step=0.1, format="%.2f", key=f"x_{key_suffix}")
             with c2:
@@ -445,17 +433,44 @@ elif menu == "システム設定":
             elif new_v < 0:
                  msg_placeholder_th.error("❌ 失敗：電圧値に負の数は設定できません。")
             else:
-                st.session_state['sensor_configs'][th_target] = {
-                    'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
-                }
-                msg_placeholder_th.success(f"✅ 成功：{th_target} の設定を更新しました。")
+                # ★追加ロジック：入力値がデフォルト値と同じかどうかチェックする
+                is_default = (
+                    new_x == DEFAULT_THRESHOLDS['x'] and
+                    new_y == DEFAULT_THRESHOLDS['y'] and
+                    new_z == DEFAULT_THRESHOLDS['z'] and
+                    new_v == DEFAULT_THRESHOLDS['v']
+                )
+
+                if is_default:
+                    # デフォルト値と同じなら、個別設定から削除する
+                    if th_target in st.session_state['sensor_configs']:
+                        del st.session_state['sensor_configs'][th_target]
+                    
+                    # リセットカウンタを上げて、画面の状態もリフレッシュする
+                    st.session_state['reset_counts'][th_target] += 1
+                    msg_placeholder_th.success(f"✅ 設定変更：{th_target} の値がデフォルトと同じため、標準設定として扱います。")
+                else:
+                    # 違う値なら、個別設定として保存
+                    st.session_state['sensor_configs'][th_target] = {
+                        'x': new_x, 'y': new_y, 'z': new_z, 'v': new_v
+                    }
+                    msg_placeholder_th.success(f"✅ 成功：{th_target} の個別設定を保存しました。")
+                
                 time.sleep(1.5)
                 msg_placeholder_th.empty()
-                # ★重要：保存後に画面全体をリロードすることで、「個別設定中」への表示切り替えと「デフォルトに戻す」ボタンの出現を行う
                 st.rerun()
 
+        # デフォルトに戻すボタン
         if is_custom:
-            st.button("デフォルト設定に戻す", on_click=reset_thresholds_callback, args=(th_target,))
+            if st.button("デフォルト設定に戻す"):
+                del st.session_state['sensor_configs'][th_target]
+                st.session_state['reset_counts'][th_target] += 1
+                
+                msg_placeholder_reset = st.empty()
+                msg_placeholder_reset.success(f"✅ 成功：{th_target} をデフォルト設定に戻しました。")
+                time.sleep(1.5)
+                msg_placeholder_reset.empty()
+                st.rerun()
 
         st.divider()
         st.caption(f"現在のデフォルト値: X={DEFAULT_THRESHOLDS['x']}G, Y={DEFAULT_THRESHOLDS['y']}G, Z={DEFAULT_THRESHOLDS['z']}G, 電圧={DEFAULT_THRESHOLDS['v']}V")
