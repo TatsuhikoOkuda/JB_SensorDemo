@@ -3,10 +3,13 @@ import pandas as pd
 import numpy as np
 import time
 import altair as alt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone  # ★timezoneを追加
 
 # ページ設定
 st.set_page_config(page_title="振動センサー監視システム", layout="wide")
+
+# --- 日本時間（JST）の定義 ---
+JST = timezone(timedelta(hours=9), 'JST')
 
 # --- CSS: ボタンの色設定 ---
 st.markdown("""
@@ -130,7 +133,9 @@ def generate_area_data(sensors):
     return pd.DataFrame(data)
 
 def generate_timeseries_data(points=60, freq='min', latest_values=None):
-    now = datetime.now()
+    # ★修正：現在時刻をJST（日本時間）で取得
+    now = datetime.now(JST)
+    
     dates = []
     for i in range(points):
         if freq == 'sec':
@@ -158,7 +163,8 @@ def generate_timeseries_data(points=60, freq='min', latest_values=None):
 
 def generate_mock_history():
     data = []
-    now = datetime.now()
+    # ★修正：履歴もJST基準で生成
+    now = datetime.now(JST)
     for i in range(10):
         t = now - timedelta(hours=i*2)
         data.append([
@@ -170,7 +176,7 @@ def generate_mock_history():
         ])
     return pd.DataFrame(data, columns=["発生日時", "センサーID", "設置エリア", "異常種別", "検測値"])
 
-# --- ★Altairグラフ描画関数（操作モード切替対応） ---
+# --- Altairグラフ描画関数 ---
 def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=False, interactive=False):
     df_reset = df.reset_index()
     df_melted = df_reset.melt('timestamp', value_vars=y_columns, var_name='Metric', value_name='Value')
@@ -190,7 +196,7 @@ def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=Fal
     point_layer = line_layer.mark_circle(size=100).encode(
         opacity=alt.value(0),
         tooltip=[
-            alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'),
+            alt.Tooltip('timestamp', title='時間', format='%H:%M:%S'), # JSTで表示されます
             alt.Tooltip('Metric', title='項目'),
             alt.Tooltip('Value', title='値', format='.3f')
         ]
@@ -198,9 +204,7 @@ def create_chart(df, y_columns, title, color_scheme='category10', is_voltage=Fal
     
     chart = (line_layer + point_layer).properties(title=title, height=300)
     
-    # ★重要：スイッチがONの場合のみ、操作機能（ズーム・移動）を有効にする
     if interactive:
-        # bind_y=False にすると、Y軸(縦)は固定され、時間軸(横)だけ動かせるようになります（推奨）
         return chart.interactive(bind_y=False)
     else:
         return chart
@@ -213,7 +217,6 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
-    # 上部の×ボタンなし
     st.caption(f"選択されたセンサー: {sensor_id}")
     limits = get_sensor_thresholds(sensor_id)
     
@@ -226,7 +229,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     
     st.subheader("直近1分間の推移 (リアルタイム詳細)")
 
-    # ★追加：グラフ操作モードの切替スイッチ
     col_t1, col_t2 = st.columns([2, 1])
     with col_t2:
         enable_interactive = st.toggle("🔍 グラフ操作モード (拡大・移動)", value=False)
@@ -237,7 +239,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
-    # グラフ描画（interactiveフラグを渡す）
     st.subheader("振動データ (X, Y, Z)")
     chart_xyz = create_chart(
         ts_data, 
@@ -258,7 +259,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
-    # 閉じるボタン（右下に配置）
     col_spacer, col_btn = st.columns([8, 1]) 
     with col_btn:
         if st.button("閉じる", type="secondary", key="close_bottom"):
@@ -401,7 +401,6 @@ elif menu == "グラフ分析":
     st.divider()
     df = generate_timeseries_data(points=100, freq='min')
     
-    # ★ここもトグルスイッチを追加して統一感を出す
     enable_interactive_main = st.toggle("🔍 グラフ操作モード (拡大・移動)", value=False, key="main_toggle")
 
     st.subheader(f"{target_sensor} - 振動データ(XYZ)")
