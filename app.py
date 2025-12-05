@@ -11,31 +11,33 @@ st.set_page_config(page_title="振動センサー監視システム", layout="wi
 # --- CSS: ボタンの色設定 ---
 st.markdown("""
     <style>
-    /* 設定保存ボタン */
-    div[data-testid="stFormSubmitButton"] > button {
+    /* 設定保存ボタン・Primaryボタンを水色にする */
+    div[data-testid="stFormSubmitButton"] > button,
+    button[kind="primary"] {
         background-color: #00BFFF !important; /* DeepSkyBlue */
         border-color: #00BFFF !important;
         color: white !important;
         font-weight: bold !important;
     }
-    div[data-testid="stFormSubmitButton"] > button:hover {
+    div[data-testid="stFormSubmitButton"] > button:hover,
+    button[kind="primary"]:hover {
         background-color: #009ACD !important;
         border-color: #009ACD !important;
         color: white !important;
     }
-    div[data-testid="stFormSubmitButton"] > button:active {
-        background-color: #00BFFF !important;
-        border-color: #00BFFF !important;
+
+    /* ★追加：閉じるボタン用（Secondary）を黒色にする */
+    button[kind="secondary"] {
+        background-color: #333333 !important; /* ダークグレー/黒 */
+        border-color: #333333 !important;
+        color: white !important;
+        font-size: 0.8rem !important; /* 少し文字を小さく */
+    }
+    button[kind="secondary"]:hover {
+        background-color: #000000 !important; /* 真っ黒 */
+        border-color: #000000 !important;
         color: white !important;
     }
-    /* 通常のPrimaryボタン（テスト送信など） */
-    button[kind="primary"] {
-        background-color: #00BFFF !important;
-        border-color: #00BFFF !important;
-        color: white !important;
-    }
-    /* ★追加：閉じるボタン（Secondary）を少し目立たせる（グレー背景に赤文字などお好みで調整可能） */
-    /* 今回はシンプルに見やすくするため、デフォルト形状のままにします */
     </style>
 """, unsafe_allow_html=True)
 
@@ -184,7 +186,6 @@ def create_static_chart(df, y_columns, title, color_scheme='category10', is_volt
             color=alt.Color('Metric', title='凡例', scale=alt.Scale(scheme=color_scheme)),
         )
 
-    # ツールチップ用（透明な点）
     point_layer = line_layer.mark_circle(size=100).encode(
         opacity=alt.value(0),
         tooltip=[
@@ -203,19 +204,8 @@ except AttributeError:
 
 @dialog_decorator("詳細トレンド分析", width="large")
 def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
-    # ★変更：上部のボタンを「✖」にして右寄せにする
-    # columnsを使って[コンテンツエリア, ボタンエリア]に分ける
-    col_info, col_close = st.columns([9, 1])
-    
-    with col_info:
-        st.caption(f"選択されたセンサー: {sensor_id}")
-    
-    with col_close:
-        # ✖ボタン (type="primary" で水色になります)
-        if st.button("✖", key="close_top", type="primary"):
-            st.rerun()
-
-    # 以降の内容表示
+    # 上部の×ボタンは削除しました
+    st.caption(f"選択されたセンサー: {sensor_id}")
     limits = get_sensor_thresholds(sensor_id)
     
     if "異常" in status:
@@ -229,7 +219,6 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     latest_params = {'x': val_x, 'y': val_y, 'z': val_z, 'v': val_v}
     ts_data = generate_timeseries_data(points=60, freq='sec', latest_values=latest_params)
     
-    # グラフ描画
     st.subheader("振動データ (X, Y, Z)")
     chart_xyz = create_static_chart(
         ts_data, 
@@ -248,10 +237,14 @@ def show_sensor_dialog(sensor_id, status, val_x, val_y, val_z, val_v):
     st.altair_chart(chart_v, use_container_width=True)
     
     st.divider()
-    # ★変更：下部のボタンも「✖」にする
-    # use_container_width=True で横幅いっぱいの押しやすいボタンにする
-    if st.button("✖ 閉じる", type="primary", key="close_bottom", use_container_width=True):
-        st.rerun()
+    
+    # ★変更：閉じるボタンを右下に小さく配置
+    # 左側に空白(spacer)を作り、右側にボタンを置く
+    col_spacer, col_btn = st.columns([8, 1]) 
+    with col_btn:
+        # type="secondary" にすることで、冒頭で設定した黒色CSSが適用されます
+        if st.button("閉じる", type="secondary", key="close_bottom"):
+            st.rerun()
 
 # --- ログイン画面 ---
 if not st.session_state['logged_in']:
